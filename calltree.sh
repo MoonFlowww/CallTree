@@ -86,7 +86,8 @@ $src =~ s|/\*.*?\*/||gs;
 
 my %kw = map { $_ => 1 } qw(if for while switch catch return new delete sizeof
                             alignof decltype static_assert namespace class struct 
-                            union enum template using typedef);
+                            union enum template using typedef constexpr consteval constinit 
+                            noexcept requires co_await co_return co_yield);
 
 # ---- Pass 1: collect definitions and return types ---------------------------
 my (%defined, %rtype);
