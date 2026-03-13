@@ -189,6 +189,37 @@ while IFS= read -r line; do
 done <<< "$PERL_OUT"
 
 [[ ${#ALL_FUNCS[@]} -eq 0 ]] && { echo "No functions found in $FILE"; exit 1; }
+# =============================================================================
+# REACHABLE SET
+#
+# When --root is given, compute the full set of functions reachable from that
+# root via BFS.  This set drives both the color map and the summary table so
+# that both only show functions that are actually part of the rooted subtree.
+# When no --root is given, the reachable set is the full function list.
+# =============================================================================
+
+declare -a VISIBLE_FUNCS
+if [[ -n "$ROOT_FUNC" ]]; then
+  declare -A _REACHED
+  declare -a _QUEUE=("$ROOT_FUNC")
+  _REACHED[$ROOT_FUNC]=1
+  while [[ ${#_QUEUE[@]} -gt 0 ]]; do
+    _HEAD="${_QUEUE[0]}"; _QUEUE=("${_QUEUE[@]:1}")
+    for _C in ${CALLS[$_HEAD]:-}; do
+      if [[ -z "${_REACHED[$_C]:-}" ]]; then
+        _REACHED[$_C]=1
+        _QUEUE+=("$_C")
+      fi
+    done
+  done
+  for F in "${ALL_FUNCS[@]}"; do
+    [[ -n "${_REACHED[$F]:-}" ]] && VISIBLE_FUNCS+=("$F")
+  done
+else
+  VISIBLE_FUNCS=("${ALL_FUNCS[@]}")
+fi
+
+
 
 # =============================================================================
 # 256-COLOR MAP
@@ -201,11 +232,13 @@ done <<< "$PERL_OUT"
 #
 # Functions are sorted alphabetically so colors stay stable across runs
 # regardless of the order they appear in the source file.
+#
+# Colors are only asigned to "Visible functions" (if using '--root' only map root and upper lvls)
 # =============================================================================
 
 declare -A FUNC_COLOR
 if [[ $USE_COLOR -eq 1 ]]; then
-  mapfile -t _SORTED < <(printf '%s\n' "${ALL_FUNCS[@]}" | sort)
+  mapfile -t _SORTED < <(printf '%s\n' "${VISIBLE_FUNCS[@]}" | sort)
   NF=${#_SORTED[@]}
   for (( ci=0; ci<NF; ci++ )); do
     (( NF == 1 )) && C=125 || C=$(( 40 + 170 * ci / (NF - 1) ))
@@ -299,7 +332,7 @@ print_table() {
     "────────────────────────────────────────" "──────────────────────"
 
   local F RAW_F RAW_C COLOR_F COLOR_C PAD_F PAD_C
-  for F in $(printf '%s\n' "${ALL_FUNCS[@]}" | sort); do
+  for F in $(printf '%s\n' "${VISIBLE_FUNCS[@]}" | sort); do
     RAW_C="${CALLS[$F]:----}"
     COLOR_F="$(colorize "$F" "$COL")"
     COLOR_C="$(calls_field "$F")"
