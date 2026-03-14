@@ -247,6 +247,30 @@ Representation:
 ./calltree.sh src/sink/rntuple.hpp --out-txt
 ```
 
+representation:
+```txt
+  src/sink/rntuple.hpp  (depth=4)
+
+rotate()  -> void
+├── bucket_key()  -> std::string
+│   ├── year_month()  -> std::string
+│   └── bucket_week()  -> uint8_t
+├── make_dir()  -> std::string
+└── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>
+    └── make_fields()  -> void
+
+
+  function                      called  calls                                     return type
+  ────────────────────────────  ──────  ────────────────────────────────────────  ──────────────────────
+  bucket_week                        1  ----                                      uint8_t
+  year_month                         1  ----                                      std::string
+  bucket_key                         2  year_month bucket_week                    std::string
+  make_dir                           2  ----                                      std::string
+  rotate                             1  bucket_key make_dir make_writer           void
+  make_fields                        1  ----                                      void
+  make_writer                        2  make_fields                               std::unique_ptr<ROOT::RNTupleWriter>
+```
+
 Identical layout to the terminal output, with no ANSI codes — safe to `grep`, `diff`, or commit.
 
 ### All outputs at once
