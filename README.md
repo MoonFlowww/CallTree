@@ -5,21 +5,22 @@ Parses function definitions and call edges statically using Perl, then renders t
 Optionally exports to Mermaid (GitHub-renderable), Graphviz DOT, and plain text.
 
 ```
+  src/sink/rntuple.hpp  (depth=4)
+
+RNTuples()  -> void
+
 ingest()  -> void
 └── get_or_create()  -> MetaWriters&
     ├── bucket_key()  -> std::string
-    │   ├── bucket_week()  -> uint8_t
-    │   └── year_month()  -> std::string
+    │   ├── year_month()  -> std::string
+    │   └── bucket_week()  -> uint8_t
+    ├── rotate()  -> void
+    │   ├── bucket_key()  -> std::string  [seen]
+    │   ├── make_dir()  -> std::string
+    │   └── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>
+    │       └── make_fields()  -> void
     ├── make_dir()  -> std::string
-    ├── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>
-    │   └── make_fields()  -> void
-    └── rotate()  -> void
-        ├── bucket_key()  -> std::string
-        │   ├── bucket_week()  -> uint8_t
-        │   └── year_month()  -> std::string
-        ├── make_dir()  -> std::string
-        └── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>
-            └── make_fields()  -> void
+    └── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>  [seen]
 ```
 
 ---
@@ -66,11 +67,12 @@ cp calltree.sh ~/.local/bin/calltree
 | `--out-dot` | `[FILE]` | `<file>.dot` | Write Graphviz DOT to file |
 | `--out-txt` | `[FILE]` | `<file>.txt` | Write plain-text tree to file (no ANSI codes) |
 | `--color` | — | off | Colorize function names in terminal using 256-color ANSI |
+| `--see` | — | off | show redundant sub-tree (hidden by default with `[seen]`) |
 
 File arguments for `--out-*` flags are optional. When omitted, the output filename is derived from the input file:
 
 ```bash
-./calltree.sh src/foo.cpp --out-mermaid          # writes src/foo.mmd
+./calltree.sh src/foo.cpp --out-mermaid           # writes src/foo.mmd
 ./calltree.sh src/foo.cpp --out-mermaid graph.mmd # writes graph.mmd
 ```
 
@@ -94,9 +96,9 @@ File arguments for `--out-*` flags are optional. When omitted, the output filena
 ingest()  -> void
 └── get_or_create()  -> MetaWriters&
     ├── bucket_key()  -> std::string
+    ├── rotate()  -> void
     ├── make_dir()  -> std::string
-    ├── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>
-    └── rotate()  -> void
+    └── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>
 ```
 
 ### Start from a specific function
@@ -107,8 +109,8 @@ ingest()  -> void
 ```
 rotate()  -> void
 ├── bucket_key()  -> std::string
-│   ├── bucket_week()  -> uint8_t
-│   └── year_month()  -> std::string
+│   ├── year_month()  -> std::string
+│   └── bucket_week()  -> uint8_t
 ├── make_dir()  -> std::string
 └── make_writer()  -> std::unique_ptr<ROOT::RNTupleWriter>
     └── make_fields()  -> void
@@ -138,16 +140,56 @@ Colors also apply in the summary table's `calls` column.
 
 Writes `src/sink/rntuple.mmd`, fenced in ` ```mermaid ``` ` blocks so it renders directly when pasted into a GitHub README, GitLab wiki, or Notion page.
 
-```markdown
+```Markdown
+graph TD
+    RNTuples["void RNTuples()"]
+    ingest["void ingest()"]
+    bucket_week["uint8_t bucket_week()"]
+    year_month["std::string year_month()"]
+    bucket_key["std::string bucket_key()"]
+    make_dir["std::string make_dir()"]
+    get_or_create["MetaWriters& get_or_create()"]
+    rotate["void rotate()"]
+    make_fields["void make_fields()"]
+    make_writer["std::unique_ptr<ROOT::RNTupleWriter> make_writer()"]
+
+    ingest --> get_or_create
+    bucket_key --> year_month
+    bucket_key --> bucket_week
+    get_or_create --> bucket_key
+    get_or_create --> rotate
+    get_or_create --> make_dir
+    get_or_create --> make_writer
+    rotate --> bucket_key
+    rotate --> make_dir
+    rotate --> make_writer
+    make_writer --> make_fields
+```
+Representation:
 ```mermaid
 graph TD
-    bucket_key["std::string bucket_key()"]
+    RNTuples["void RNTuples()"]
+    ingest["void ingest()"]
     bucket_week["uint8_t bucket_week()"]
-    ...
+    year_month["std::string year_month()"]
+    bucket_key["std::string bucket_key()"]
+    make_dir["std::string make_dir()"]
+    get_or_create["MetaWriters& get_or_create()"]
+    rotate["void rotate()"]
+    make_fields["void make_fields()"]
+    make_writer["std::unique_ptr<ROOT::RNTupleWriter> make_writer()"]
+
     ingest --> get_or_create
+    bucket_key --> year_month
+    bucket_key --> bucket_week
     get_or_create --> bucket_key
-    ...
-```
+    get_or_create --> rotate
+    get_or_create --> make_dir
+    get_or_create --> make_writer
+    rotate --> bucket_key
+    rotate --> make_dir
+    rotate --> make_writer
+    make_writer --> make_fields
 ```
 
 ### Export to Graphviz DOT
@@ -166,17 +208,37 @@ dot -Tpng -o graph.png src/sink/rntuple.dot
 Node labels include the return type and call frequency:
 
 ```dot
-digraph calltree {
-    graph [label="../src/sink/rntuple.hpp" labelloc=t fontname="Courier" fontsize=14];
+digraph callgraph {
+    graph [label="src/sink/rntuple.hpp" labelloc=t fontname="Courier" fontsize=14];
     node  [shape=box fontname="Courier" style=filled fillcolor="#f5f5f5"];
+    edge  [fontname="Courier" fontsize=10];
     rankdir=LR;
 
+    "RNTuples" [label="void\nRNTuples()\ncalled: 0"];
+    "ingest" [label="void\ningest()\ncalled: 0"];
+    "bucket_week" [label="uint8_t\nbucket_week()\ncalled: 1"];
+    "year_month" [label="std::string\nyear_month()\ncalled: 1"];
+    "bucket_key" [label="std::string\nbucket_key()\ncalled: 2"];
+    "make_dir" [label="std::string\nmake_dir()\ncalled: 2"];
+    "get_or_create" [label="MetaWriters&\nget_or_create()\ncalled: 1"];
     "rotate" [label="void\nrotate()\ncalled: 1"];
+    "make_fields" [label="void\nmake_fields()\ncalled: 1"];
+    "make_writer" [label="std::unique_ptr<ROOT::RNTupleWriter>\nmake_writer()\ncalled: 2"];
+
     "ingest" -> "get_or_create";
+    "bucket_key" -> "year_month";
+    "bucket_key" -> "bucket_week";
+    "get_or_create" -> "bucket_key";
     "get_or_create" -> "rotate";
-    ...
+    "get_or_create" -> "make_dir";
+    "get_or_create" -> "make_writer";
+    "rotate" -> "bucket_key";
+    "rotate" -> "make_dir";
+    "rotate" -> "make_writer";
+    "make_writer" -> "make_fields";
 }
 ```
+
 
 ### Export to plain text
 
@@ -201,16 +263,13 @@ The table is always printed below the tree:
 ```
   function                      called  calls                                     return type
   ────────────────────────────  ──────  ────────────────────────────────────────  ──────────────────────
-  bucket_key                         4  bucket_week year_month                    std::string
   bucket_week                        1  ----                                      uint8_t
-  get_or_create                      1  bucket_key make_dir make_writer rotate    MetaWriters&
-  ingest                             0  get_or_create                             void
+  year_month                         1  ----                                      std::string
+  bucket_key                         2  year_month bucket_week                    std::string
   make_dir                           2  ----                                      std::string
+  rotate                             1  bucket_key make_dir make_writer           void
   make_fields                        1  ----                                      void
   make_writer                        2  make_fields                               std::unique_ptr<ROOT::RNTupleWriter>
-  RNTuples                           0  ----                                      void
-  rotate                             1  bucket_key make_dir make_writer           void
-  year_month                         1  ----                                      std::string
 ```
 
 | Column | Description |
