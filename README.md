@@ -238,7 +238,8 @@ digraph callgraph {
     "make_writer" -> "make_fields";
 }
 ```
-
+Representation:
+![Diagram](misc/dot.svg)
 
 ### Export to plain text
 
