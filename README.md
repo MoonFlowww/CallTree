@@ -63,11 +63,12 @@ cp calltree.sh ~/.local/bin/calltree
 |------|----------|---------|-------------|
 | `--depth` | `N` | `4` | Recursion depth in the tree |
 | `--root` | `FUNC` | auto | Start tree from a specific function instead of auto-detected roots |
+| `--color` | — | off | Colorize function names in terminal using 256-color ANSI |
+| `--see` | — | off | show redundant sub-tree (hidden by default with `[seen]`) |
 | `--out-mermaid` | `[FILE]` | `<file>.mmd` | Write Mermaid graph to file (renders in GitHub/GitLab/Notion) |
 | `--out-dot` | `[FILE]` | `<file>.dot` | Write Graphviz DOT to file |
 | `--out-txt` | `[FILE]` | `<file>.txt` | Write plain-text tree to file (no ANSI codes) |
-| `--color` | — | off | Colorize function names in terminal using 256-color ANSI |
-| `--see` | — | off | show redundant sub-tree (hidden by default with `[seen]`) |
+
 
 File arguments for `--out-*` flags are optional. When omitted, the output filename is derived from the input file:
 
