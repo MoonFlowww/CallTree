@@ -1,6 +1,6 @@
 # calltree.sh
 
-ASCII call tree generator for C++ files — single file or entire project.  
+ASCII call tree generator for C++ files, single file or entire project.  
 Parses function definitions and call edges statically using Perl, then renders them as a tree in the terminal.  
 Supports cross-file call resolution, recursive directory scanning, whitelist/blacklist filtering, and exports to Mermaid, Graphviz DOT, and plain text.
 
