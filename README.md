@@ -1,8 +1,8 @@
 # calltree.sh
 
-ASCII call tree generator for a single C++ file.  
+ASCII call tree generator for C++ files — single file or entire project.  
 Parses function definitions and call edges statically using Perl, then renders them as a tree in the terminal.  
-Optionally exports to Mermaid (GitHub-renderable), Graphviz DOT, and plain text.
+Supports cross-file call resolution, recursive directory scanning, whitelist/blacklist filtering, and exports to Mermaid, Graphviz DOT, and plain text.
 
 ```
   src/sink/rntuple.hpp  (depth=4)
@@ -54,7 +54,17 @@ cp calltree.sh ~/.local/bin/calltree
 ## Usage
 
 ```
+# Single file (fully backward-compatible)
 ./calltree.sh <file.cpp> [OPTIONS]
+
+# Multiple explicit files
+./calltree.sh file1.cpp file2.cpp file3.hpp [OPTIONS]
+
+# Recursive directory scan
+./calltree.sh --dir <src/> [OPTIONS]
+
+# Directory scan with filtering
+./calltree.sh --dir <src/> --include "*.cpp" --exclude "test_*" [OPTIONS]
 ```
 
 ### Options
@@ -62,24 +72,34 @@ cp calltree.sh ~/.local/bin/calltree
 | Flag | Argument | Default | Description |
 |------|----------|---------|-------------|
 | `--depth` | `N` | `4` | Recursion depth in the tree |
-| `--root` | `FUNC` | auto | Start tree from a specific function instead of auto-detected roots |
+| `--root` | `FUNC` | auto | Start tree from a specific function. In multi-file mode, accepts either a bare function name (auto-picks the first file that defines it) or a fully-qualified key `filepath::::funcname` to pin a specific file |
+| `--dir` | `DIR` | — | Recursively scan `DIR` for C++ files (`.cpp .hpp .cc .cxx .h .hxx`). Repeatable — multiple `--dir` flags accumulate |
+| `--include` | `PATTERN` | — | Keep only files whose **basename** matches this glob. Repeatable. Applied before `--exclude`. When absent, all files pass |
+| `--exclude` | `PATTERN` | — | Drop files whose **basename** matches this glob. Repeatable. Takes precedence over `--include` matches |
 | `--color` | — | off | Colorize function names in terminal using 256-color ANSI |
-| `--see` | — | off | show redundant sub-tree (hidden by default with `[seen]`) |
-| `--out-mermaid` | `[FILE]` | `<file>.mmd` | Write Mermaid graph to file (renders in GitHub/GitLab/Notion) |
-| `--out-dot` | `[FILE]` | `<file>.dot` | Write Graphviz DOT to file |
-| `--out-txt` | `[FILE]` | `<file>.txt` | Write plain-text tree to file (no ANSI codes) |
+| `--see` | — | off | Always expand repeated subtrees (disable `[seen]` compression) |
+| `--out-mermaid` | `[FILE]` | `<base>.mmd` | Write Mermaid graph. In multi-file mode, wraps each file's functions in a named subgraph |
+| `--out-dot` | `[FILE]` | `<base>.dot` | Write Graphviz DOT. In multi-file mode, wraps each file's functions in a cluster |
+| `--out-txt` | `[FILE]` | `<base>.txt` | Write plain-text tree (no ANSI codes) |
 
-
-File arguments for `--out-*` flags are optional. When omitted, the output filename is derived from the input file:
+File arguments for `--out-*` flags are optional. When omitted, the output path is derived automatically:
 
 ```bash
-./calltree.sh src/foo.cpp --out-mermaid           # writes src/foo.mmd
-./calltree.sh src/foo.cpp --out-mermaid graph.mmd # writes graph.mmd
+# Single file
+./calltree.sh src/foo.cpp --out-mermaid           # → src/foo.mmd
+./calltree.sh src/foo.cpp --out-mermaid graph.mmd # → graph.mmd
+
+# --dir
+./calltree.sh --dir src/ --out-mermaid            # → src/calltree.mmd
+./calltree.sh --dir src/ --out-dot                # → src/calltree.dot
+
+# Multiple positional files (no --dir)
+./calltree.sh a.cpp b.cpp --out-dot               # → ./calltree.dot
 ```
 
 ---
 
-## Examples
+## Single-file examples
 
 ### Basic tree
 
@@ -103,10 +123,11 @@ ingest()  -> void
 ```
 
 ### Start from a specific function
+
 ```bash
 ./calltree.sh src/sink/rntuple.hpp --root rotate
 ```
-> **rotate** is the name of the function that you want to take as "root"
+
 ```
 rotate()  -> void
 ├── bucket_key()  -> std::string
@@ -141,32 +162,6 @@ Colors also apply in the summary table's `calls` column.
 
 Writes `src/sink/rntuple.mmd`, fenced in ` ```mermaid ``` ` blocks so it renders directly when pasted into a GitHub README, GitLab wiki, or Notion page.
 
-```Markdown
-graph TD
-    RNTuples["void RNTuples()"]
-    ingest["void ingest()"]
-    bucket_week["uint8_t bucket_week()"]
-    year_month["std::string year_month()"]
-    bucket_key["std::string bucket_key()"]
-    make_dir["std::string make_dir()"]
-    get_or_create["MetaWriters& get_or_create()"]
-    rotate["void rotate()"]
-    make_fields["void make_fields()"]
-    make_writer["std::unique_ptr<ROOT::RNTupleWriter> make_writer()"]
-
-    ingest --> get_or_create
-    bucket_key --> year_month
-    bucket_key --> bucket_week
-    get_or_create --> bucket_key
-    get_or_create --> rotate
-    get_or_create --> make_dir
-    get_or_create --> make_writer
-    rotate --> bucket_key
-    rotate --> make_dir
-    rotate --> make_writer
-    make_writer --> make_fields
-```
-Representation:
 ```mermaid
 graph TD
     RNTuples["void RNTuples()"]
@@ -206,41 +201,9 @@ dot -Tsvg -o graph.svg src/sink/rntuple.dot
 dot -Tpng -o graph.png src/sink/rntuple.dot
 ```
 
-Node labels include the return type and call frequency:
+Node labels include the return type and call frequency.
 
-```dot
-digraph callgraph {
-    graph [label="src/sink/rntuple.hpp" labelloc=t fontname="Courier" fontsize=14];
-    node  [shape=box fontname="Courier" style=filled fillcolor="#f5f5f5"];
-    edge  [fontname="Courier" fontsize=10];
-    rankdir=LR;
-
-    "RNTuples" [label="void\nRNTuples()\ncalled: 0"];
-    "ingest" [label="void\ningest()\ncalled: 0"];
-    "bucket_week" [label="uint8_t\nbucket_week()\ncalled: 1"];
-    "year_month" [label="std::string\nyear_month()\ncalled: 1"];
-    "bucket_key" [label="std::string\nbucket_key()\ncalled: 2"];
-    "make_dir" [label="std::string\nmake_dir()\ncalled: 2"];
-    "get_or_create" [label="MetaWriters&\nget_or_create()\ncalled: 1"];
-    "rotate" [label="void\nrotate()\ncalled: 1"];
-    "make_fields" [label="void\nmake_fields()\ncalled: 1"];
-    "make_writer" [label="std::unique_ptr<ROOT::RNTupleWriter>\nmake_writer()\ncalled: 2"];
-
-    "ingest" -> "get_or_create";
-    "bucket_key" -> "year_month";
-    "bucket_key" -> "bucket_week";
-    "get_or_create" -> "bucket_key";
-    "get_or_create" -> "rotate";
-    "get_or_create" -> "make_dir";
-    "get_or_create" -> "make_writer";
-    "rotate" -> "bucket_key";
-    "rotate" -> "make_dir";
-    "rotate" -> "make_writer";
-    "make_writer" -> "make_fields";
-}
-```
-Representation:
-![Diagram](misc/dot.svg)
+![Single-file DOT diagram](misc/dot.svg)
 
 ### Export to plain text
 
@@ -248,7 +211,8 @@ Representation:
 ./calltree.sh src/sink/rntuple.hpp --out-txt
 ```
 
-representation:
+Identical layout to the terminal output, with no ANSI codes — safe to `grep`, `diff`, or commit.
+
 ```txt
   src/sink/rntuple.hpp  (depth=4)
 
@@ -272,8 +236,6 @@ rotate()  -> void
   make_writer                        2  make_fields                               std::unique_ptr<ROOT::RNTupleWriter>
 ```
 
-Identical layout to the terminal output, with no ANSI codes — safe to `grep`, `diff`, or commit.
-
 ### All outputs at once
 
 ```bash
@@ -282,10 +244,128 @@ Identical layout to the terminal output, with no ANSI codes — safe to `grep`, 
 
 ---
 
+## Multi-file examples
+
+Multi-file mode is activated whenever more than one file is provided, either via multiple positional arguments or via `--dir`. All original flags continue to work identically; the only visual changes are the `[basename]` annotations in the tree and an extra `file` column in the summary table.
+
+### Two explicit files
+
+```bash
+./calltree.sh src/core.cpp src/net.cpp --depth 3
+```
+
+<!-- PLACEHOLDER: terminal output showing cross-file tree with [basename] annotations -->
+```
+  2 files  (depth=3)
+
+dispatch()  [core.cpp]  -> void
+├── make_key()  [core.cpp]  -> std::string
+│   └── format()  [net.cpp]  -> int
+└── send()  [net.cpp]  -> void
+    ├── encode()  [net.cpp]  -> std::string
+    │   └── compress()  [net.cpp]  -> std::string
+    └── flush()  [net.cpp]  -> void
+        └── write_buf()  [net.cpp]  -> void
+
+
+  function                      file                    called  calls                                     return type
+  ────────────────────────────  ──────────────────────  ──────  ────────────────────────────────────────  ──────────────────────
+  make_key                      core.cpp                     1  format                                    std::string
+  dispatch                      core.cpp                     0  make_key send                             void
+  ...
+```
+
+Cross-file calls are shown inline in the tree. The `[basename]` tag after each function name shows which file it lives in — it only appears in multi-file mode.
+
+### Recursive directory scan
+
+```bash
+./calltree.sh --dir src/ --depth 4
+```
+
+Scans `src/` recursively for all `.cpp .hpp .cc .cxx .h .hxx` files (sorted, deduplicated), analyzes them as a single unit, and prints the unified call tree.
+
+<!-- PLACEHOLDER: real project tree showing cross-file resolution across multiple files -->
+
+### Directory scan with filtering
+
+```bash
+# Only implementation files, not headers
+./calltree.sh --dir src/ --include "*.cpp"
+
+# Exclude generated and test files
+./calltree.sh --dir src/ --exclude "*.pb.cc" --exclude "test_*" --exclude "*_mock.*"
+
+# Combined — only implementation, no tests
+./calltree.sh --dir src/ --include "*.cpp" --exclude "test_*"
+```
+
+`--include` and `--exclude` both match against the **basename** of each file using standard shell glob syntax. Processing order: `--include` is applied first (if any are specified); then `--exclude` is applied to the surviving set. Both flags are repeatable.
+
+### Rooting across files
+
+```bash
+# Bare function name — auto-picks the first file that defines it
+./calltree.sh --dir src/ --root dispatch
+
+# Fully-qualified key — pin to a specific file when the name is ambiguous
+./calltree.sh --dir src/ --root "src/core.cpp::::dispatch"
+```
+
+The `FILE::::FUNC` key syntax uses four colons as a separator (safe since `::::` cannot appear in C++ identifiers or typical paths).
+
+### Multi-file Mermaid export
+
+```bash
+./calltree.sh --dir src/ --out-mermaid
+# → src/calltree.mmd
+```
+
+Each file's functions are grouped in a named `subgraph`. Cross-file edges connect nodes across subgraphs automatically.
+
+```markdown
+```mermaid
+graph TD
+  subgraph core_cpp["core.cpp"]
+    core_cpp_make_key["std::string make_key()"]
+    core_cpp_dispatch["void dispatch()"]
+  end
+  subgraph net_cpp["net.cpp"]
+    net_cpp_send["void send()"]
+    net_cpp_flush["void flush()"]
+    net_cpp_encode["std::string encode()"]
+    ...
+  end
+
+  core_cpp_make_key --> net_cpp_format
+  core_cpp_dispatch --> core_cpp_make_key
+  core_cpp_dispatch --> net_cpp_send
+  ...
+```​
+```
+
+Node IDs use `SAFE_BASENAME_funcname` to stay unique even when two files define a function with the same name.
+
+<!-- PLACEHOLDER: rendered Mermaid screenshot of a real multi-file project -->
+
+### Multi-file DOT export
+
+```bash
+./calltree.sh --dir src/ --out-dot
+dot -Tsvg -o graph.svg src/calltree.dot
+```
+
+Each file becomes a `subgraph cluster_N` with its own label and a light grey background. Cross-cluster edges are drawn between the full-path node IDs.
+
+<!-- PLACEHOLDER: rendered DOT/SVG screenshot of a real multi-file project -->
+
+---
+
 ## Summary table
 
-The table is always printed below the tree:
+The table is always printed below the tree. In multi-file mode it gains a `file` column.
 
+**Single-file:**
 ```
   function                      called  calls                                     return type
   ────────────────────────────  ──────  ────────────────────────────────────────  ──────────────────────
@@ -298,16 +378,31 @@ The table is always printed below the tree:
   make_writer                        2  make_fields                               std::unique_ptr<ROOT::RNTupleWriter>
 ```
 
+**Multi-file:**
+```
+  function                      file                    called  calls                                     return type
+  ────────────────────────────  ──────────────────────  ──────  ────────────────────────────────────────  ──────────────────────
+  make_key                      core.cpp                     1  format                                    std::string
+  dispatch                      core.cpp                     0  make_key send                             void
+  send                          net.cpp                      1  encode flush                              void
+  ...
+```
+
 | Column | Description |
 |--------|-------------|
 | `function` | Function name as defined in the file |
-| `called` | Total number of times this function is invoked across all callers |
-| `calls` | Space-separated list of functions this function calls |
+| `file` | Basename of the file where the function is defined *(multi-file mode only)* |
+| `called` | Total number of times this function is invoked across all callers in the analyzed set |
+| `calls` | Space-separated list of functions this function calls (display names only, stripped of file path) |
 | `return type` | Extracted from the line preceding the function definition |
 
 ---
 
 ## How it works
+
+### Single-file vs multi-file
+
+In single-file mode, function keys are bare names. In multi-file mode, the internal key is `filepath::::funcname` throughout — in the tree, the table, and the export files. The four-colon separator is chosen because it cannot appear in a C++ identifier. Display always strips the path back to a bare function name; the file is shown separately as an annotation or table column.
 
 ### What counts as a function
 
@@ -327,6 +422,19 @@ For each matched definition, the parser walks backward to the start of the line,
 
 For every function `F`, `extract_body()` locates its braced body by counting brace depth from the opening `{`. The body text is then scanned for occurrences of every other known function name followed by `(`, not preceded by `.` or `->`. Each hit is counted; the total across all callers is the `called` frequency in the table.
 
+### Cross-file call resolution
+
+When multiple files are analyzed, the Perl pass reads all sources in a single invocation. Pass 1 builds a global `funcname → [files that define it]` registry. Pass 2 scans each function body and, for every callee found in the global registry, applies this resolution rule:
+
+1. If the callee is defined in the **same file** as the caller, use that definition.
+2. Otherwise, use the **first file** in definition-order that defines the callee.
+
+This matches compiler lookup semantics for non-overloaded free functions and ensures that same-file helper calls are never misattributed to a homonymous function in another file.
+
+### File collection (`--dir`)
+
+`find` is invoked with `-print0` and the result piped through `sort -z`, so filenames with spaces and special characters are handled correctly. The standard C++ extensions searched are `.cpp .hpp .cc .cxx .h .hxx`. `--include` and `--exclude` patterns are applied in bash using `case`/glob matching against basenames only.
+
 ### Cycle detection
 
 The tree emitter threads a colon-delimited `VISITED` string down the call stack. If a node appears in its own ancestor path, it is printed with `[cycle]` and recursion stops. Nodes reached via different paths are drawn in full — both call sites are real and belong in the documentation.
@@ -335,7 +443,9 @@ The tree emitter threads a colon-delimited `VISITED` string down the call stack.
 
 ## Limitations
 
-- Single-file only: cross-file calls are not resolved.
 - The parser is regex-based, not a full AST. Complex declarations (multi-line signatures, macro-wrapped definitions, trailing return types) may not be detected.
 - Template specialisations (`process<T>` vs `process<U>`) map to the same base name.
 - `#define`d pseudo-functions are not detected.
+- Cross-file resolution picks the **first** matching definition when a name is defined in multiple files. There is no overload resolution or namespace awareness.
+- File paths containing spaces are supported by the `--dir` scanner but must be quoted carefully when passed as positional arguments.
+- File paths containing the literal string `::::` are not supported (this sequence is reserved as the internal separator).
