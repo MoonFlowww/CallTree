@@ -54,7 +54,7 @@ cp calltree.sh ~/.local/bin/calltree
 ## Usage
 
 ```
-# Single file (fully backward-compatible)
+# Single file
 ./calltree.sh <file.cpp> [OPTIONS]
 
 # Multiple explicit files
