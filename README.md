@@ -203,7 +203,7 @@ dot -Tpng -o graph.png src/sink/rntuple.dot
 
 Node labels include the return type and call frequency.
 
-![Single-file DOT diagram](misc/dot.svg)
+![Single-file DOT diagram](misc/dot_single.svg)
 
 ### Export to plain text
 
@@ -346,7 +346,195 @@ graph TD
 
 Node IDs use `SAFE_BASENAME_funcname` to stay unique even when two files define a function with the same name.
 
-<!-- PLACEHOLDER: rendered Mermaid screenshot of a real multi-file project -->
+```mermaid
+graph TD
+  subgraph memory_hpp["memory.hpp"]
+    memory_hpp_aligned_alloc_impl["void* aligned_alloc_impl()"]
+    memory_hpp_aligned_free_impl["void aligned_free_impl()"]
+    memory_hpp_AlignedBuffer["~ AlignedBuffer()"]
+    memory_hpp_data_[": size_(o.size_), data_()"]
+    memory_hpp_resize["void resize()"]
+    memory_hpp_data["T* data()"]
+    memory_hpp_size["usize size()"]
+    memory_hpp_empty["bool empty()"]
+    memory_hpp_begin["T* begin()"]
+    memory_hpp_end["T* end()"]
+    memory_hpp_release["void release()"]
+    memory_hpp_Arena["~ Arena()"]
+    memory_hpp_alloc["void* alloc()"]
+    memory_hpp_create["T* create()"]
+    memory_hpp_reset["void reset()"]
+    memory_hpp_used["usize used()"]
+    memory_hpp_capacity["usize capacity()"]
+  end
+  subgraph types_hpp["types.hpp"]
+    types_hpp_a["Color(u32 r, u32 g, u32 b, u32 a = 255) : r(r), g(g), b(b), a()"]
+    types_hpp_black["Color black()"]
+    types_hpp_white["Color white()"]
+    types_hpp_red["Color red()"]
+    types_hpp_blue["Color blue()"]
+    types_hpp_green["Color green()"]
+    types_hpp_orange["Color orange()"]
+    types_hpp_purple["Color purple()"]
+    types_hpp_gray["Color gray()"]
+    types_hpp_with_alpha["Color with_alpha()"]
+    types_hpp_empty["bool empty()"]
+    types_hpp_expand["void expand()"]
+    types_hpp_merge["void merge()"]
+    types_hpp_width["f64 width()"]
+    types_hpp_height["f64 height()"]
+    types_hpp_h["Rect(f64 x, f64 y, f64 w, f64 h) : x(x), y(y), w(w), h()"]
+  end
+  subgraph series_hpp["series.hpp"]
+    series_hpp_empty["bool empty()"]
+    series_hpp_y_["Series(const f64* x, const f64* y, usize n) : x_(n), y_()"]
+    series_hpp_x_view["DataView x_view()"]
+    series_hpp_y_view["DataView y_view()"]
+    series_hpp_size["usize size()"]
+    series_hpp_bounds["const BBox& bounds()"]
+    series_hpp_x_data["f64* x_data()"]
+    series_hpp_y_data["f64* y_data()"]
+    series_hpp_recompute_bounds["void recompute_bounds()"]
+    series_hpp_decimate["Series decimate()"]
+  end
+  subgraph ppm_writer_hpp["ppm_writer.hpp"]
+    ppm_writer_hpp_write_ppm["bool write_ppm()"]
+  end
+  subgraph figure_hpp["figure.hpp"]
+    figure_hpp_fig_h_[", fig_w_(width), fig_h_()"]
+    figure_hpp_set_title["void set_title()"]
+    figure_hpp_set_xlabel["void set_xlabel()"]
+    figure_hpp_set_ylabel["void set_ylabel()"]
+    figure_hpp_grid["void grid()"]
+    figure_hpp_axis["void axis()"]
+    figure_hpp_legend["void legend()"]
+    figure_hpp_layout["void layout()"]
+    figure_hpp_text["void text()"]
+    figure_hpp_perf["void perf()"]
+    figure_hpp_plot["PlotCommand plot()"]
+    figure_hpp_plot_ref["PlotCommand plot_ref()"]
+    figure_hpp_render["void render()"]
+    figure_hpp_canvas["const rendering::Canvas& canvas()"]
+    figure_hpp_entries["const std::vector<PlotEntry>& entries()"]
+    figure_hpp_add_entry["void add_entry()"]
+    figure_hpp_compute_plot_area["void compute_plot_area()"]
+    figure_hpp_compute_data_bounds["void compute_data_bounds()"]
+    figure_hpp_setup_transform["void setup_transform()"]
+    figure_hpp_render_grid["void render_grid()"]
+    figure_hpp_render_axes["void render_axes()"]
+    figure_hpp_render_data["void render_data()"]
+    figure_hpp_render_legend["void render_legend()"]
+    figure_hpp_render_title_and_labels["void render_title_and_labels()"]
+  end
+  subgraph plot_command_hpp["plot_command.hpp"]
+    plot_command_hpp_data["PlotCommand& data()"]
+    plot_command_hpp_color["PlotCommand& color()"]
+    plot_command_hpp_width["PlotCommand& width()"]
+    plot_command_hpp_alpha["PlotCommand& alpha()"]
+    plot_command_hpp_label["PlotCommand& label()"]
+    plot_command_hpp_line["PlotCommand& line()"]
+    plot_command_hpp_marker["PlotCommand& marker()"]
+  end
+  subgraph plot_entry_hpp["plot_entry.hpp"]
+    plot_entry_hpp_x_view["data::DataView x_view()"]
+    plot_entry_hpp_y_view["data::DataView y_view()"]
+    plot_entry_hpp_size["usize size()"]
+    plot_entry_hpp_bounds["BBox bounds()"]
+  end
+  subgraph canvas_hpp["canvas.hpp"]
+    canvas_hpp_clear["void clear()"]
+    canvas_hpp_set_pixel["void set_pixel()"]
+    canvas_hpp_draw_line["void draw_line()"]
+    canvas_hpp_fill_rect["void fill_rect()"]
+    canvas_hpp_draw_rect["void draw_rect()"]
+    canvas_hpp_draw_circle["void draw_circle()"]
+    canvas_hpp_data["u8* data()"]
+    canvas_hpp_width["u32 width()"]
+    canvas_hpp_height["u32 height()"]
+    canvas_hpp_stride["usize stride()"]
+    canvas_hpp_pack["u32 pack()"]
+    canvas_hpp_draw_line_aa["void draw_line_aa()"]
+    canvas_hpp_fpart["f64 fpart()"]
+    canvas_hpp_rfpart["f64 rfpart()"]
+    canvas_hpp_plot["void plot()"]
+  end
+  subgraph text_hpp["text.hpp"]
+    text_hpp_get_glyph["const Glyph& get_glyph()"]
+    text_hpp_draw_text["void draw_text()"]
+    text_hpp_draw_text_vertical["void draw_text_vertical()"]
+    text_hpp_text_width["i32 text_width()"]
+    text_hpp_text_height["i32 text_height()"]
+    text_hpp_text_width_vertical["i32 text_width_vertical()"]
+    text_hpp_text_height_vertical["i32 text_height_vertical()"]
+  end
+  subgraph tick_engine_hpp["tick_engine.hpp"]
+    tick_engine_hpp_compute["std::vector<Tick> compute()"]
+    tick_engine_hpp_compute_linear["std::vector<Tick> compute_linear()"]
+    tick_engine_hpp_compute_log["std::vector<Tick> compute_log()"]
+    tick_engine_hpp_format_value["std::string format_value()"]
+    tick_engine_hpp_format_log_value["std::string format_log_value()"]
+  end
+  subgraph transform_hpp["transform.hpp"]
+    transform_hpp_set["void set()"]
+    transform_hpp_to_px_x["f64 to_px_x()"]
+    transform_hpp_to_px_y["f64 to_px_y()"]
+    transform_hpp_to_data_x["f64 to_data_x()"]
+    transform_hpp_to_data_y["f64 to_data_y()"]
+    transform_hpp_data_box["const BBox& data_box()"]
+    transform_hpp_pixel_rect["const Rect& pixel_rect()"]
+    transform_hpp_safe_log10["f64 safe_log10()"]
+  end
+
+  memory_hpp_AlignedBuffer --> memory_hpp_release
+  memory_hpp_resize --> memory_hpp_release
+  memory_hpp_resize --> memory_hpp_aligned_alloc_impl
+  memory_hpp_release --> memory_hpp_aligned_free_impl
+  memory_hpp_Arena --> memory_hpp_aligned_free_impl
+  memory_hpp_create --> memory_hpp_alloc
+  types_hpp_merge --> types_hpp_expand
+  series_hpp_y_ --> series_hpp_recompute_bounds
+  figure_hpp_render --> figure_hpp_compute_plot_area
+  figure_hpp_render --> figure_hpp_compute_data_bounds
+  figure_hpp_render --> figure_hpp_setup_transform
+  figure_hpp_render --> figure_hpp_render_grid
+  figure_hpp_render --> figure_hpp_render_axes
+  figure_hpp_render --> figure_hpp_render_data
+  figure_hpp_render --> figure_hpp_render_legend
+  figure_hpp_render --> figure_hpp_render_title_and_labels
+  figure_hpp_render_grid --> tick_engine_hpp_compute
+  figure_hpp_render_axes --> tick_engine_hpp_compute
+  figure_hpp_render_axes --> text_hpp_text_width
+  figure_hpp_render_axes --> text_hpp_draw_text
+  figure_hpp_render_data --> series_hpp_decimate
+  figure_hpp_render_legend --> text_hpp_text_height
+  figure_hpp_render_legend --> text_hpp_text_width
+  figure_hpp_render_legend --> text_hpp_draw_text
+  figure_hpp_render_title_and_labels --> text_hpp_text_width
+  figure_hpp_render_title_and_labels --> text_hpp_draw_text
+  figure_hpp_render_title_and_labels --> text_hpp_text_height_vertical
+  figure_hpp_render_title_and_labels --> text_hpp_draw_text_vertical
+  canvas_hpp_clear --> canvas_hpp_pack
+  canvas_hpp_draw_line --> canvas_hpp_draw_line_aa
+  canvas_hpp_fill_rect --> canvas_hpp_set_pixel
+  canvas_hpp_draw_rect --> canvas_hpp_draw_line
+  canvas_hpp_draw_circle --> canvas_hpp_set_pixel
+  canvas_hpp_draw_line_aa --> canvas_hpp_rfpart
+  canvas_hpp_draw_line_aa --> canvas_hpp_plot
+  canvas_hpp_draw_line_aa --> canvas_hpp_fpart
+  canvas_hpp_rfpart --> canvas_hpp_fpart
+  canvas_hpp_plot --> canvas_hpp_set_pixel
+  text_hpp_get_glyph --> transform_hpp_set
+  text_hpp_draw_text --> text_hpp_get_glyph
+  text_hpp_draw_text_vertical --> text_hpp_get_glyph
+  tick_engine_hpp_compute --> tick_engine_hpp_compute_log
+  tick_engine_hpp_compute --> tick_engine_hpp_compute_linear
+  tick_engine_hpp_compute_linear --> tick_engine_hpp_format_value
+  tick_engine_hpp_compute_log --> tick_engine_hpp_format_log_value
+  transform_hpp_set --> transform_hpp_safe_log10
+  transform_hpp_to_px_x --> transform_hpp_safe_log10
+  transform_hpp_to_px_y --> transform_hpp_safe_log10
+```
+
 
 ### Multi-file DOT export
 
@@ -357,7 +545,8 @@ dot -Tsvg -o graph.svg src/calltree.dot
 
 Each file becomes a `subgraph cluster_N` with its own label and a light grey background. Cross-cluster edges are drawn between the full-path node IDs.
 
-<!-- PLACEHOLDER: rendered DOT/SVG screenshot of a real multi-file project -->
+
+![Multi-file DOT diagram](misc/dot_multi.svg)
 
 ---
 
