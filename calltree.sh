@@ -573,7 +573,7 @@ _write_mermaid() {
   declare -A _fmap=() _eseen=()
 
   {
-
+    printf 'flowchart TD\n'
     if [[ $_MULTI -eq 1 ]]; then
       # build file → keys map
       for _k in "${ALL_FUNCS[@]}"; do
