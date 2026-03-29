@@ -165,7 +165,7 @@ for my $file (@files) {
     $text =~ s|/\*.*?\*/||gs;
     $src{$file} = $text;
 
-    while ($text =~ /\b([A-Za-z_]\w*)\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*\{/g) {
+  while ($text =~ /\b([A-Za-z_]\w*)\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:\s*:[^{]*)?\{/g) {
         my ($name, $pos) = ($1, $-[0]);
         my $pre = substr($text, 0, $pos);
         next if $kw{$name} || $pre =~ /(?:->|\.)\s*$/;
@@ -195,7 +195,7 @@ my %all_known = map { $_ => 1 } keys %func_to_files;
 # ---- extract_body -----------------------------------------------------------
 sub extract_body {
     my ($text, $fn) = @_;
-    my $pat = qr/\b\Q$fn\E\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*\{/;
+    my $pat = qr/\b\Q$fn\E\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:\s*:[^{]*)?\{/;
     my $brace_start;
     while ($text =~ /$pat/g) {
         next if substr($text, 0, $-[0]) =~ /(?:->|\.)\s*$/;
