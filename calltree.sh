@@ -154,6 +154,11 @@ my %kw = map { $_ => 1 } qw(
   noexcept requires co_await co_return co_yield
 );
 
+# Balanced parens allowing one level of nesting: matches (a), (a, b(c))
+my $BAL_PAREN = qr/\( (?: [^()]* | \( [^()]* \) )* \)/x;
+my $INIT_ITEM = qr/[A-Za-z_][\w:]*\s*$BAL_PAREN/;
+my $INIT_LIST = qr/\s*:\s*$INIT_ITEM(?:\s*,\s*$INIT_ITEM)*/;
+
 # ---- Pass 1: collect definitions & return types ----------------------------
 my (%src, %file_defs, %func_to_files, %rtype, %seen_def);
 
@@ -165,7 +170,7 @@ for my $file (@files) {
     $text =~ s|/\*.*?\*/||gs;
     $src{$file} = $text;
 
-  while ($text =~ /\b([A-Za-z_]\w*)\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:\s*:[^{]*)?\{/g) {
+  while ($text =~ /\b([A-Za-z_]\w*)\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:$INIT_LIST\s*)?\{/g) {
         my ($name, $pos) = ($1, $-[0]);
         my $pre = substr($text, 0, $pos);
         next if $kw{$name} || $pre =~ /(?:->|\.)\s*$/;
@@ -195,7 +200,7 @@ my %all_known = map { $_ => 1 } keys %func_to_files;
 # ---- extract_body -----------------------------------------------------------
 sub extract_body {
     my ($text, $fn) = @_;
-    my $pat = qr/\b\Q$fn\E\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:\s*:[^{]*)?\{/;
+    my $pat = qr/\b\Q$fn\E\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:$INIT_LIST\s*)?\{/;
     my $brace_start;
     while ($text =~ /$pat/g) {
         next if substr($text, 0, $-[0]) =~ /(?:->|\.)\s*$/;
