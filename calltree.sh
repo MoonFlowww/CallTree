@@ -1,91 +1,250 @@
 #!/usr/bin/env bash
-# calltree.sh | ASCII / Mermaid / DOT call graph — single or multi-file C++ analysis.
+# calltree.sh | ASCII / Mermaid / DOT call graph multi-language static analysis.
 #
-# Single-file usage (fully backward-compatible):
-#   ./calltree.sh <file.cpp> [OPTIONS]
+# Supports C, C++, Python, Rust, Go, Java, JavaScript, TypeScript, Ruby, Lua,
+# PHP, Perl, C#, Kotlin, Scala, Swift, Haskell, OCaml, and ~25 other languages
+# via universal-ctags. File dispatch is automatic by extension.
+#
+# Single-file usage:
+#   ./calltree.sh -F <file> [OPTIONS]
 #
 # Multi-file / project-wide usage:
-#   ./calltree.sh file1.cpp file2.cpp [OPTIONS]
-#   ./calltree.sh --dir src/ [OPTIONS]
-#   ./calltree.sh --dir src/ --include "*.cpp" --exclude "test_*" [OPTIONS]
+#   ./calltree.sh -F file1.cpp -F file2.py [OPTIONS]
+#   ./calltree.sh -D src/ [OPTIONS]
+#   ./calltree.sh -D src/ -I "*.cpp" -E "test_*" [OPTIONS]
 #
-# Options (all original flags preserved):
+# Options:
+#   -F FILE             input file (repeatable)
+#   -D DIR              recursively scan DIR for source files (repeatable)
+#                       recognised extensions:
+#                         .c .h .cpp .hpp .cc .cxx .hxx
+#                         .cs .py .rs .go .java
+#                         .js .jsx .ts .tsx
+#                         .rb .lua .php .pl .pm
+#                         .scala .kt .swift .hs .ml .fs
+#   -I PATTERN          include glob, basename match (repeatable, applied first)
+#   -E PATTERN          exclude glob, basename match (repeatable, applied last)
+#   -f FUNC             find function: start tree from FUNC
+#                       accepts a bare name (auto-picks first file that defines
+#                       it) or a full key FILE::::FUNC to pin a specific file
 #   --depth N           max recursion depth (default: 4)
-#   --root FUNC         start tree from FUNC; for multi-file use FUNC (auto-pick)
-#                       or the full key form FILE::::FUNC to pin a specific file
-#   --dir DIR           recursively scan DIR for C++ files (repeatable)
-#                       default extensions: .cpp .hpp .cc .cxx .h .hxx
-#   --include PATTERN   keep only files whose basename matches glob (repeatable)
-#   --exclude PATTERN   drop files whose basename matches glob  (repeatable)
-#   --color             colorize function names in terminal (256-color ANSI)
-#   --see               always expand repeated subtrees (disable [seen] compression)
-#   --out-mermaid [F]   write Mermaid graph (.mmd) — multi-file uses subgraphs
-#   --out-dot [F]       write Graphviz DOT (.dot)  — multi-file uses clusters
-#   --out-txt [F]       write plain-text tree (.txt)
+#   -out-T [FILE]       write plain-text tree (default: <base>.txt)
+#   -out-M [FILE]       write Mermaid graph  (default: <base>.mmd)
+#                       multi-file uses one subgraph per file
+#   -out-D [FILE]       write Graphviz DOT   (default: <base>.dot)
+#                       multi-file uses one cluster per file
+#   -c                  colorize function names in terminal (256-color ANSI)
+#   -s                  see-all: expand repeated subtrees (disable [seen])
+#   -p                  show performance footer (timings + line counters)
+#   -v                  print version and exit
+#   -w                  print absolute path to this script and exit
+#   -h, --help          print help and exit
+#
+# Pipeline:
+#   universal-ctags  --(JSON tags)-->  perl backend  --(tables)-->  bash render
+#
+#   1. ctags parses every input file, emitting JSON tags with name, path,
+#      language, line, end, kind, typeref, and signature.
+#   2. perl filters tags by a per-language kind allow-list, builds a global
+#      funcname -> [files] registry, re-opens each source to extract each
+#      function body by its line range, and scans for known callees. Method
+#      calls (obj.foo / ptr->foo / self.foo) are excluded via a lookbehind.
+#   3. bash loads the resulting CALLS / TYPES / FREQ tables into associative
+#      arrays and renders the tree, summary table, and export files.
+#
+# Return type extraction:
+#   1. ctags "typeref" field  (C, C++, Go, Java, TypeScript, Kotlin, PHP, ...)
+#   2. parsed from signature  (Rust style: "(args) -> Type")
+#   3. fallback               ("void" for C/C++, "-" for untyped languages)
 #
 # Multi-file behaviour:
 #   - Each function's internal key is  filepath::::funcname
-#   - Cross-file calls are resolved: same-file definition is preferred; otherwise
-#     the first file that defines the callee is used
+#   - Cross-file calls are resolved: same-file definition is preferred; else
+#     the first file that defines the callee (in input order) is used.
 #   - The ASCII tree annotates each node with [basename.ext]
 #   - The summary table gains a "file" column
 #   - Mermaid output wraps each file's functions in a subgraph
 #   - DOT output wraps each file's functions in a cluster
 #
 # Limitations:
-#   - File paths containing spaces or the literal string "::::" are not supported
-#   - Single-file only per-function: cross-file template specialisations map to
-#     whichever file the matching definition was first encountered in
+#   - Name-in-body scan, not semantic analysis; overloaded names in different
+#     files collapse to the first definition.
+#   - Method calls are intentionally excluded; OO-heavy code produces partial
+#     graphs.
+#   - Template and generic specialisations (process<T>, process[Int], ...) map
+#     to the same base name.
+#   - Macro-defined pseudo-functions are not detected (ctags does not
+#     preprocess).
+#   - File extensions must match content. Renaming foo.cpp -> foo.py makes
+#     ctags run the Python parser on C++ and yield zero tags.
+#   - File paths containing the literal string "::::" are not supported
+#     (reserved as the internal separator).
 #
-# Deps: bash >= 4.0, perl (standard on Linux/macOS), graphviz (optional, for .dot)
+# Deps:
+#   bash >= 4.0
+#   perl            (JSON::PP is in core since 5.14)
+#   universal-ctags with +json feature (NOT exuberant-ctags)
+#   graphviz        (optional, only for rendering .dot to svg/png)
 set -euo pipefail
 
-# =============================================================================
-# INTERNAL KEY FORMAT:  filepath::::funcname
-# ::::" cannot appear in C++ identifiers; avoid spaces in paths.
-# =============================================================================
+readonly _VERSION="2.0.0"
 readonly _SEP="::::"
-_kfile() { printf '%s' "${1%%${_SEP}*}";  }
-_kfunc() { printf '%s' "${1##*${_SEP}}";  }
-_kbase() { local _f; _f=$(_kfile "$1"); printf '%s' "${_f##*/}"; }
-
-# =============================================================================
-# TIMING  (perl Time::HiRes — works on Linux and macOS without extra modules)
-# =============================================================================
-_ts_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'; }
-
-# =============================================================================
-# ARG PARSING
-# =============================================================================
-_MAX_DEPTH=4; _ROOT_FUNC=""; _USE_COLOR=0; _SEE_ALL=0
-_OUT_MMD=""; _OUT_DOT=""; _OUT_TXT=""
-declare -a _INPUT_FILES=() _SCAN_DIRS=() _INC_PATS=() _EXC_PATS=()
 readonly _AUTO="__AUTO__"
 
-_is_val() { [[ ${1+x} == x ]] && [[ -n "${1-}" ]] && [[ "${1-}" != --* ]]; }
+# =============================================================================
+# Internal key helpers | keys are filepath::::funcname
+# =============================================================================
+_kfile() { printf '%s' "${1%%${_SEP}*}"; }
+_kfunc() { printf '%s' "${1##*${_SEP}}"; }
+_kbase() { local _f; _f=$(_kfile "$1"); printf '%s' "${_f##*/}"; }
+
+_ts_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'; }
+
+_realpath() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$1"
+  elif readlink -f / >/dev/null 2>&1; then
+    readlink -f "$1"
+  else
+    case "$1" in
+      /*) printf '%s\n' "$1" ;;
+      *)  printf '%s/%s\n' "$PWD" "$1" ;;
+    esac
+  fi
+}
+
+# =============================================================================
+# Defaults
+# =============================================================================
+_MAX_DEPTH=4
+_ROOT_FUNC=""
+_USE_COLOR=0
+_SEE_ALL=0
+_SHOW_PERF=0
+_OUT_MMD=""
+_OUT_DOT=""
+_OUT_TXT=""
+declare -a _INPUT_FILES=() _SCAN_DIRS=() _INC_PATS=() _EXC_PATS=()
+
+_usage() {
+  cat <<EOF
+calltree.sh v${_VERSION} - multi-language call tree (ctags + perl)
+
+INPUT
+  -F FILE         input file (repeatable)
+  -D DIR          recursively scan directory (repeatable)
+  -I PATTERN      include glob, basename match (repeatable, applied first)
+  -E PATTERN      exclude glob, basename match (repeatable, applied last)
+
+SELECTION
+  -f FUNC         start tree from FUNC (bare name or 'file::::func' key)
+  --depth N       max recursion depth (default: 4)
+
+OUTPUT
+  -out-T [FILE]   write plain text  (default: <base>.txt)
+  -out-M [FILE]   write Mermaid     (default: <base>.mmd)
+  -out-D [FILE]   write Graphviz    (default: <base>.dot)
+
+DISPLAY
+  -c              colorize terminal output (256-color ANSI)
+  -s              expand repeated subtrees ([seen] compression off)
+  -p              show performance footer (timings + line counts)
+
+META
+  -v              print version and exit
+  -w              print absolute path to this script and exit
+  -h, --help      this help
+
+LANGUAGES
+  Anything universal-ctags supports: C/C++, Python, Rust, Go, Java, JS/TS,
+  C#, Ruby, Lua, PHP, Perl, Scala, Kotlin, Swift, Haskell, OCaml, ...
+  Files are dispatched automatically by extension.
+
+DEPS
+  bash >=4, perl (core JSON::PP), universal-ctags with +json support.
+
+EXAMPLES
+  calltree.sh -F src/main.cpp -c
+  calltree.sh -D src/ -I '*.cpp' -E 'test_*' --depth 5 -p
+  calltree.sh -D src/ -f dispatch -out-M -out-D -c
+  calltree.sh -F a.py -F b.py -out-T graph.txt
+EOF
+}
+
+# =============================================================================
+# Argument parser
+# =============================================================================
+_is_val() { [[ ${1+x} == x ]] && [[ -n "${1-}" ]] && [[ "${1-}" != -* ]]; }
+
+_need_arg() {
+  # _need_arg <flag> <count_remaining>
+  [[ $2 -ge 2 ]] || { printf 'ERROR: %s needs a value\n' "$1" >&2; exit 1; }
+}
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --depth)   _MAX_DEPTH=$2;      shift 2 ;;
-    --root)    _ROOT_FUNC=$2;      shift 2 ;;
-    --dir)     _SCAN_DIRS+=("$2"); shift 2 ;;
-    --include) _INC_PATS+=("$2");  shift 2 ;;
-    --exclude) _EXC_PATS+=("$2");  shift 2 ;;
-    --color)   _USE_COLOR=1;       shift   ;;
-    --see)     _SEE_ALL=1;         shift   ;;
-    --out-mermaid) shift; if _is_val "${1-}"; then _OUT_MMD=$1; shift; else _OUT_MMD=$_AUTO; fi ;;
-    --out-dot)     shift; if _is_val "${1-}"; then _OUT_DOT=$1; shift; else _OUT_DOT=$_AUTO; fi ;;
-    --out-txt)     shift; if _is_val "${1-}"; then _OUT_TXT=$1; shift; else _OUT_TXT=$_AUTO; fi ;;
-    --*) printf 'Unknown option: %s\n' "$1" >&2; exit 1 ;;
+    -F)  _need_arg "$1" "$#"; _INPUT_FILES+=("$2"); shift 2 ;;
+    -D)  _need_arg "$1" "$#"; _SCAN_DIRS+=("$2");   shift 2 ;;
+    -I)  _need_arg "$1" "$#"; _INC_PATS+=("$2");    shift 2 ;;
+    -E)  _need_arg "$1" "$#"; _EXC_PATS+=("$2");    shift 2 ;;
+    -f)  _need_arg "$1" "$#"; _ROOT_FUNC="$2";      shift 2 ;;
+    --depth) _need_arg "$1" "$#"; _MAX_DEPTH="$2";  shift 2 ;;
+
+    -out-T) shift; if _is_val "${1-}"; then _OUT_TXT=$1; shift; else _OUT_TXT=$_AUTO; fi ;;
+    -out-M) shift; if _is_val "${1-}"; then _OUT_MMD=$1; shift; else _OUT_MMD=$_AUTO; fi ;;
+    -out-D) shift; if _is_val "${1-}"; then _OUT_DOT=$1; shift; else _OUT_DOT=$_AUTO; fi ;;
+
+    -c)  _USE_COLOR=1; shift ;;
+    -s)  _SEE_ALL=1;   shift ;;
+    -p)  _SHOW_PERF=1; shift ;;
+
+    -v)  printf 'calltree.sh %s\n' "$_VERSION"; exit 0 ;;
+    -w)  _realpath "$0"; exit 0 ;;
+    -h|--help) _usage; exit 0 ;;
+
+    --)  shift; while [[ $# -gt 0 ]]; do _INPUT_FILES+=("$1"); shift; done ;;
+    -*)  printf 'Unknown option: %s\n' "$1" >&2
+         printf 'Try: %s -h\n' "$0" >&2
+         exit 1 ;;
     *)   _INPUT_FILES+=("$1"); shift ;;
   esac
 done
 
-# -- Collect files from --dir -------------------------------------------------
+# =============================================================================
+# Dependency check
+# =============================================================================
+_check_ctags() {
+  if ! command -v ctags >/dev/null 2>&1; then
+    cat >&2 <<EOF
+ERROR: ctags not found. Install universal-ctags:
+  Debian/Ubuntu : sudo apt install universal-ctags
+  Fedora        : sudo dnf install ctags
+  Arch          : sudo pacman -S ctags
+  macOS         : brew install universal-ctags
+  FreeBSD       : pkg install universal-ctags
+EOF
+    exit 1
+  fi
+  if ! ctags --version 2>&1 | head -1 | grep -qi 'universal'; then
+    printf 'ERROR: universal-ctags required (found: %s)\n' \
+      "$(ctags --version 2>&1 | head -1)" >&2
+    exit 1
+  fi
+  if ! ctags --list-features 2>/dev/null | awk '{print $1}' | grep -qx 'json'; then
+    printf 'ERROR: ctags built without JSON support (need +json feature).\n' >&2
+    exit 1
+  fi
+}
+_check_ctags
+
+# =============================================================================
+# Collect files from -D scans (apply -I/-E filters)
+# =============================================================================
 for _DIR in "${_SCAN_DIRS[@]+"${_SCAN_DIRS[@]}"}"; do
   [[ -d "$_DIR" ]] || { printf 'ERROR: not a directory: %s\n' "$_DIR" >&2; exit 1; }
   while IFS= read -r -d '' _F; do
-    _BN="${_F##*/}"; _OK=1
+    _BN="${_F##*/}"
+    _OK=1
     if [[ ${#_INC_PATS[@]} -gt 0 ]]; then
       _OK=0
       for _P in "${_INC_PATS[@]}"; do
@@ -95,28 +254,33 @@ for _DIR in "${_SCAN_DIRS[@]+"${_SCAN_DIRS[@]}"}"; do
     fi
     [[ $_OK -eq 0 ]] && continue
     for _P in "${_EXC_PATS[@]+"${_EXC_PATS[@]}"}"; do
+      # shellcheck disable=SC2254
       case "$_BN" in $_P) _OK=0; break ;; esac
     done
     [[ $_OK -eq 0 ]] && continue
     _INPUT_FILES+=("$_F")
   done < <(find "$_DIR" -type f \( \
-      -name "*.cpp" -o -name "*.hpp" -o -name "*.cc" \
-      -o -name "*.cxx" -o -name "*.h"   -o -name "*.hxx" \
+        -name '*.c'     -o -name '*.h'     -o -name '*.cpp'  -o -name '*.hpp' \
+     -o -name '*.cc'    -o -name '*.cxx'   -o -name '*.hxx'  -o -name '*.cs'  \
+     -o -name '*.py'    -o -name '*.rs'    -o -name '*.go'   -o -name '*.java' \
+     -o -name '*.js'    -o -name '*.jsx'   -o -name '*.ts'   -o -name '*.tsx' \
+     -o -name '*.rb'    -o -name '*.lua'   -o -name '*.php'  -o -name '*.pl'  \
+     -o -name '*.pm'    -o -name '*.scala' -o -name '*.kt'   -o -name '*.swift' \
+     -o -name '*.hs'    -o -name '*.ml'    -o -name '*.fs'                    \
     \) -print0 | sort -z)
 done
 
 if [[ ${#_INPUT_FILES[@]} -eq 0 ]]; then
-  printf 'Usage: %s <file.cpp> [--depth N] [--root FUNC]\n' "$0"
-  printf '       [--dir DIR] [--include PAT] [--exclude PAT]\n'
-  printf '       [--out-mermaid [F]] [--out-dot [F]] [--out-txt [F]]\n'
-  printf '       [--color] [--see]\n'
+  _usage
   exit 1
 fi
 for _F in "${_INPUT_FILES[@]}"; do
   [[ -f "$_F" ]] || { printf 'ERROR: file not found: %s\n' "$_F" >&2; exit 1; }
 done
 
-# -- Mode, title, default output base -----------------------------------------
+# =============================================================================
+# Mode + title + default output base
+# =============================================================================
 if [[ ${#_INPUT_FILES[@]} -eq 1 ]]; then
   _MULTI=0
   _TITLE="${_INPUT_FILES[0]}"
@@ -131,114 +295,185 @@ else
     _BASE="calltree"
   fi
 fi
+[[ "$_OUT_TXT" == "$_AUTO" ]] && _OUT_TXT="${_BASE}.txt"
 [[ "$_OUT_MMD" == "$_AUTO" ]] && _OUT_MMD="${_BASE}.mmd"
 [[ "$_OUT_DOT" == "$_AUTO" ]] && _OUT_DOT="${_BASE}.dot"
-[[ "$_OUT_TXT" == "$_AUTO" ]] && _OUT_TXT="${_BASE}.txt"
 
 # =============================================================================
-# PERL: multi-file static analysis
-# Keys in output use "::::" as filepath/funcname separator.
+# Run ctags + perl backend
 # =============================================================================
 _T_START=$(_ts_ms)
-_PERL_OUT=$(perl - "${_INPUT_FILES[@]}" <<'PERL'
+_TAGS_TMP=$(mktemp)
+trap 'rm -f "$_TAGS_TMP"' EXIT
+
+# --fields=+neKlSt  -> add: line(n) end(e) Kind-long(K) language(l) signature(S) typeref(t)
+# --sort=no         -> preserve source order so per-file line sort works
+if ! ctags --output-format=json \
+           --sort=no \
+           --fields=+neKlSt \
+           -f - "${_INPUT_FILES[@]}" > "$_TAGS_TMP" 2>/dev/null; then
+  printf 'ERROR: ctags failed.\n' >&2
+  exit 1
+fi
+
+_PERL_OUT=$(perl - "$_TAGS_TMP" <<'PERL'
 use strict;
 use warnings;
+use JSON::PP;
 
-my $SEP   = "::::";
-my @files = @ARGV;
+my $SEP = "::::";
+my $tags_file = shift @ARGV;
 
-my %kw = map { $_ => 1 } qw(
-  if for while switch catch return new delete sizeof
-  alignof decltype static_assert namespace class struct
-  union enum template using typedef constexpr consteval constinit
-  noexcept requires co_await co_return co_yield
+open my $tfh, '<', $tags_file or die "cannot open $tags_file: $!\n";
+my $json = JSON::PP->new->utf8(0);
+
+# Per-language kind allow-list. ctags uses different kind names per language;
+# this table picks the ones that represent actual callable function defs.
+my %ok_kinds_per_lang = (
+    'C'          => { function => 1 },
+    'C++'        => { function => 1 },
+    'C#'         => { method => 1 },
+    'Python'     => { function => 1, member => 1 },     # member = class method
+    'Go'         => { func => 1 },
+    'Rust'       => { function => 1, method => 1 },
+    'Java'       => { method => 1 },
+    'JavaScript' => { function => 1, method => 1, getter => 1, setter => 1, generator => 1 },
+    'TypeScript' => { function => 1, method => 1, getter => 1, setter => 1, generator => 1 },
+    'Ruby'       => { method => 1, singletonMethod => 1 },
+    'Lua'        => { function => 1 },
+    'PHP'        => { function => 1 },
+    'Perl'       => { subroutine => 1 },
+    'Kotlin'     => { method => 1 },
+    'Scala'      => { method => 1, function => 1 },
+    'Swift'      => { method => 1, function => 1 },
+    'Haskell'    => { function => 1 },
+    'OCaml'      => { val => 1, function => 1 },
+);
+# fallback for any language not listed above
+my %default_ok = (
+    function => 1, method => 1, func => 1, fn => 1, subroutine => 1,
 );
 
-# Balanced parens allowing one level of nesting: matches (a), (a, b(c))
-my $BAL_PAREN = qr/\( (?: [^()]* | \( [^()]* \) )* \)/x;
-my $INIT_ITEM = qr/[A-Za-z_][\w:]*\s*$BAL_PAREN/;
-my $INIT_LIST = qr/\s*:\s*$INIT_ITEM(?:\s*,\s*$INIT_ITEM)*/;
+# ---- Pass A: read all tags from JSON ---------------------------------------
+my @raw_tags;
+while (my $line = <$tfh>) {
+    chomp $line;
+    next unless $line =~ /^\{/;
+    my $obj = eval { $json->decode($line) };
+    next unless $obj && (($obj->{_type} // '') eq 'tag');
+    push @raw_tags, $obj;
+}
+close $tfh;
 
-# ---- Pass 1: collect definitions & return types ----------------------------
-my (%src, %file_defs, %func_to_files, %rtype, %seen_def);
+# ---- Pass B: filter, group by file, dedupe ---------------------------------
+my (%file_defs, %func_to_files, %rtype, %lang_of, %seen_def);
 
-for my $file (@files) {
-    open my $fh, '<', $file or die "Cannot open $file: $!\n";
-    my $text = do { local $/; <$fh> };
-    close $fh;
-    $text =~ s|//[^\n]*||g;
-    $text =~ s|/\*.*?\*/||gs;
-    $src{$file} = $text;
+for my $t (@raw_tags) {
+    my $name = $t->{name};
+    my $file = $t->{path};
+    my $kind = $t->{kind} // '';
+    my $lang = $t->{language} // '';
+    next unless defined $name && defined $file && $name ne '' && $file ne '';
 
-  while ($text =~ /\b([A-Za-z_]\w*)\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:$INIT_LIST\s*)?\{/g) {
-        my ($name, $pos) = ($1, $-[0]);
-        my $pre = substr($text, 0, $pos);
-        next if $kw{$name} || $pre =~ /(?:->|\.)\s*$/;
+    my $allow = $ok_kinds_per_lang{$lang} // \%default_ok;
+    next unless $allow->{$kind};
 
-        my $bol = rindex($pre, "\n");
-        $bol = $bol < 0 ? 0 : $bol + 1;
-        my $prefix = substr($pre, $bol);
-        $prefix =~ s/\b\w[\w:]*::\s*$//;
-        $prefix =~ s/\b(?:static|inline|virtual|explicit|constexpr|consteval|constinit|extern|friend)\b\s*//gx;
-        $prefix =~ s/^\s+|\s+$//g;
-        $prefix =~ s/\s+/ /g;
+    my $key = "${file}${SEP}${name}";
+    next if $seen_def{$key}++;   # first definition wins (matches v1 semantics)
 
-        my $key = "${file}${SEP}${name}";
-        $rtype{$key} //= (($prefix ne '') && ($prefix !~ /^[\:{;\(]*$/)) ? $prefix : 'void';
+    my $start = $t->{line} // 0;
+    my $end   = $t->{end}  // 0;
 
-        unless ($seen_def{"${file}\0${name}"}++) {
-            push @{$file_defs{$file}}, $name;
-        }
-        unless (grep { $_ eq $file } @{$func_to_files{$name} // []}) {
-            push @{$func_to_files{$name}}, $file;
+    # typeref looks like "typename:int"  strip the prefix
+    my $tref = $t->{typeref} // '';
+    $tref =~ s/^typename:\s*//;
+    $tref =~ s/^\s+|\s+$//g;
+    # Languages like Rust embed the return type inside the signature as
+    # "(args) -> Type". Pull it out when typeref is missing.
+    if ($tref eq '') {
+        my $sig = $t->{signature} // '';
+        if ($sig =~ /->\s*(.+?)\s*$/) {
+            $tref = $1;
         }
     }
+    if ($tref eq '') {
+        $tref = ($lang eq 'C' || $lang eq 'C++') ? 'void' : '-';
+    }
+
+    push @{$file_defs{$file}}, {
+        name => $name,
+        line => $start,
+        end  => $end,
+        key  => $key,
+    };
+    push @{$func_to_files{$name}}, $file
+        unless grep { $_ eq $file } @{$func_to_files{$name} // []};
+
+    $rtype{$key}    = $tref;
+    $lang_of{$file} = $lang;
 }
 
 my %all_known = map { $_ => 1 } keys %func_to_files;
 
-# ---- extract_body -----------------------------------------------------------
-sub extract_body {
-    my ($text, $fn) = @_;
-    my $pat = qr/\b\Q$fn\E\s*\([^()]*\)\s*(?:const\s*|override\s*|noexcept\s*)*(?:$INIT_LIST\s*)?\{/;
-    my $brace_start;
-    while ($text =~ /$pat/g) {
-        next if substr($text, 0, $-[0]) =~ /(?:->|\.)\s*$/;
-        $brace_start = $+[0] - 1;
-        last;
-    }
-    return '' unless defined $brace_start;
-    my ($depth, $body) = (0, '');
-    for my $i ($brace_start .. length($text) - 1) {
-        my $c = substr($text, $i, 1);
-        $depth++ if $c eq '{';
-        $depth-- if $c eq '}';
-        $body .= $c;
-        last if $depth == 0;
-    }
-    return $body;
-}
-
-# ---- Pass 2: call edges -----------------------------------------------------
+# ---- Pass C: read sources, fix end lines, scan bodies ----------------------
 my (%calls, %freq);
+my $total_lines = 0;
 
-for my $file (@files) {
-    for my $fn (@{$file_defs{$file} // []}) {
-        my $caller_key = "${file}${SEP}${fn}";
-        my $body = extract_body($src{$file}, $fn);
-        next unless $body;
+for my $file (sort keys %file_defs) {
+    open my $fh, '<', $file or next;
+    my @lines = <$fh>;
+    close $fh;
+    my $nlines = scalar @lines;
+    $total_lines += $nlines;
 
+    # sort defs by line so we can patch missing end values
+    my @sorted = sort { $a->{line} <=> $b->{line} } @{$file_defs{$file}};
+    for my $i (0 .. $#sorted) {
+        my $d = $sorted[$i];
+        if (!$d->{end} || $d->{end} < $d->{line}) {
+            if ($i < $#sorted) {
+                $d->{end} = $sorted[$i+1]->{line} - 1;
+            } else {
+                $d->{end} = $nlines;
+            }
+        }
+        $d->{end} = $nlines    if $d->{end} > $nlines;
+        $d->{end} = $d->{line} if $d->{end} < $d->{line};
+    }
+
+    my $lang = $lang_of{$file} // '';
+
+    for my $d (@sorted) {
+        my ($s, $e) = ($d->{line}, $d->{end});
+        next if $s <= 0 || $s > $nlines;
+
+        my $body = join('', @lines[$s-1 .. $e-1]);
+
+        # strip comments & strings best effort, not language-perfect
+        $body =~ s{//[^\n]*}{}g;
+        $body =~ s{/\*.*?\*/}{}gs;
+        if ($lang eq 'Python' || $lang eq 'Ruby' || $lang eq 'Perl' || $lang eq 'Sh') {
+            $body =~ s{\#[^\n]*}{}g;
+        }
+        $body =~ s{"(?:[^"\\]|\\.)*"}{""}gs;
+        $body =~ s{'(?:[^'\\]|\\.)*'}{''}gs;
+
+        my $caller_key  = $d->{key};
+        my $caller_name = $d->{name};
+
+        # Skip identifiers preceded by '.' or '>' (i.e. obj.foo() / ptr->foo()).
+        # This works uniformly for C/C++/Rust/Go/Java/Py/JS  '::' qualified
+        # calls (e.g. Foo::bar()) are still counted.
         while ($body =~ /(?<![>.])\b([A-Za-z_]\w*)\s*\(/g) {
             my $callee = $1;
             next unless $all_known{$callee};
-            next if $callee eq $fn;
+            next if $callee eq $caller_name;
 
-            # prefer same-file definition; else first file that defines it
-            my $callee_files_ref = $func_to_files{$callee} // [];
-            my $callee_file =
-                (grep { $_ eq $file } @$callee_files_ref)
-                    ? $file
-                    : $callee_files_ref->[0];
+            # resolve: prefer same-file def, else first file that defines it
+            my $cf_ref = $func_to_files{$callee} // [];
+            my $callee_file = (grep { $_ eq $file } @$cf_ref)
+                                ? $file
+                                : $cf_ref->[0];
             next unless defined $callee_file;
 
             my $callee_key = "${callee_file}${SEP}${callee}";
@@ -248,46 +483,35 @@ for my $file (@files) {
     }
 }
 
-# ---- Output -----------------------------------------------------------------
+# ---- Emit (same wire format as v1) -----------------------------------------
 print "CALLS\n";
-for my $file (@files) {
-    for my $fn (@{$file_defs{$file} // []}) {
-        my $key = "${file}${SEP}${fn}";
-        printf "%s\t%s\n", $key, join(' ', @{$calls{$key} // []});
+for my $file (sort keys %file_defs) {
+    my @sorted = sort { $a->{line} <=> $b->{line} } @{$file_defs{$file}};
+    for my $d (@sorted) {
+        printf "%s\t%s\n", $d->{key}, join(' ', @{$calls{$d->{key}} // []});
     }
 }
 print "---\n";
 
 print "TYPES\n";
-for my $file (@files) {
-    for my $fn (@{$file_defs{$file} // []}) {
-        my $key = "${file}${SEP}${fn}";
-        printf "%s\t%s\n", $key, $rtype{$key} // 'void';
+for my $file (sort keys %file_defs) {
+    my @sorted = sort { $a->{line} <=> $b->{line} } @{$file_defs{$file}};
+    for my $d (@sorted) {
+        printf "%s\t%s\n", $d->{key}, $rtype{$d->{key}} // '-';
     }
 }
 print "---\n";
 
 print "FREQ\n";
-for my $file (@files) {
-    for my $fn (@{$file_defs{$file} // []}) {
-        my $key = "${file}${SEP}${fn}";
-        printf "%s\t%d\n", $key, $freq{$key} // 0;
+for my $file (sort keys %file_defs) {
+    my @sorted = sort { $a->{line} <=> $b->{line} } @{$file_defs{$file}};
+    for my $d (@sorted) {
+        printf "%s\t%d\n", $d->{key}, $freq{$d->{key}} // 0;
     }
 }
 print "---\n";
 
 print "LINESREAD\n";
-my $total_lines = 0;
-for my $file (@files) {
-    # Count raw newlines in the original source (before comment stripping).
-    open my $fh, '<', $file or next;
-    my $raw = do { local $/; <$fh> };
-    close $fh;
-    my $nl = ($raw =~ tr/\n//);
-    # If the last line has no trailing newline it still counts as a line.
-    $nl++ if length($raw) && substr($raw, -1) ne "\n";
-    $total_lines += $nl;
-}
 print "$total_lines\n";
 print "---\n";
 PERL
@@ -296,7 +520,7 @@ PERL
 [[ -z "$_PERL_OUT" ]] && { printf 'No functions found in specified files.\n' >&2; exit 1; }
 
 # =============================================================================
-# LOAD PERL OUTPUT INTO BASH ASSOCIATIVE ARRAYS
+# Load perl output into bash assoc arrays
 # =============================================================================
 declare -A CALLS=() RTYPE=() FREQ=()
 declare -a ALL_FUNCS=()
@@ -317,7 +541,7 @@ while IFS= read -r _line; do
       ;;
     TYPES)
       IFS=$'\t' read -r _KEY _V <<< "$_line"
-      RTYPE[$_KEY]="${_V:-void}"
+      RTYPE[$_KEY]="${_V:--}"
       ;;
     FREQ)
       IFS=$'\t' read -r _KEY _V <<< "$_line"
@@ -333,13 +557,12 @@ done <<< "$_PERL_OUT"
 _T_BACKEND_END=$(_ts_ms)
 
 # =============================================================================
-# REACHABLE SET  (when --root is given)
+# Reachable set (when -f is given)
 # =============================================================================
 declare -a VISIBLE_FUNCS=()
 _ROOT_KEY=""
 
 if [[ -n "$_ROOT_FUNC" ]]; then
-  # Accept either bare funcname (auto-pick first file) or full FILE::::FUNC key
   if [[ "$_ROOT_FUNC" == *"${_SEP}"* ]]; then
     _ROOT_KEY="$_ROOT_FUNC"
   else
@@ -368,7 +591,7 @@ else
 fi
 
 # =============================================================================
-# 256-COLOR MAP  (keyed by funcname for display)
+# 256-color map
 # =============================================================================
 declare -A FUNC_COLOR=()
 if [[ $_USE_COLOR -eq 1 ]]; then
@@ -395,14 +618,14 @@ _color() {  # funcname  use_color
     printf '%s' "$1"
   fi
 }
-_grey() {   # text  use_color
+_grey() {
   if [[ ${2:-0} -eq 1 ]]; then
     printf '\033[38;5;%dm%s\033[0m' "$_GREY" "$1"
   else
     printf '%s' "$1"
   fi
 }
-_seen_marker() {  # funcname  use_color
+_seen_marker() {
   if [[ ${2:-0} -eq 1 && -n "${FUNC_COLOR[$1]:-}" ]]; then
     printf '  [\033[38;5;%dmseen\033[0m]' "${FUNC_COLOR[$1]}"
   else
@@ -410,7 +633,7 @@ _seen_marker() {  # funcname  use_color
   fi
 }
 
-_uniq_calls_raw() {  # key → unique callee-keys, space-separated
+_uniq_calls_raw() {
   local _raw="${CALLS[$1]:-}"
   [[ -z "$_raw" ]] && return
   local -A _sw=(); local _out="" _w
@@ -421,7 +644,7 @@ _uniq_calls_raw() {  # key → unique callee-keys, space-separated
   printf '%s' "$_out"
 }
 
-_uniq_calls_names() {  # key → unique callee funcnames (display only)
+_uniq_calls_names() {
   local _raw; _raw=$(_uniq_calls_raw "$1")
   [[ -z "$_raw" ]] && return
   local _out="" _ck
@@ -433,7 +656,7 @@ _uniq_calls_names() {  # key → unique callee funcnames (display only)
 }
 
 # =============================================================================
-# ROOT DETECTION
+# Root detection
 # =============================================================================
 declare -A _IS_CALLEE=()
 for _K in "${ALL_FUNCS[@]}"; do
@@ -451,7 +674,7 @@ else
 fi
 
 # =============================================================================
-# TREE EMITTER
+# Tree emitter
 # =============================================================================
 declare -A _SEEN_SUB=()
 
@@ -498,7 +721,7 @@ _emit() {
 }
 
 # =============================================================================
-# SUMMARY TABLE
+# Summary table
 # =============================================================================
 _print_table() {
   local _col=${1:-0}
@@ -555,7 +778,7 @@ _print_table() {
 }
 
 # =============================================================================
-# ASCII TREE + TABLE
+# ASCII renderer
 # =============================================================================
 _print_ascii() {
   local _col=${1:-0}
@@ -570,7 +793,7 @@ _print_ascii() {
 }
 
 # =============================================================================
-# MERMAID WRITER
+# Mermaid writer
 # =============================================================================
 _write_mermaid() {
   local _out_file=$1
@@ -580,11 +803,9 @@ _write_mermaid() {
   {
     printf 'flowchart TD\n'
     if [[ $_MULTI -eq 1 ]]; then
-      # build file → keys map
       for _k in "${ALL_FUNCS[@]}"; do
         _f=$(_kfile "$_k"); _fmap[$_f]+=" $_k"
       done
-      # one subgraph per file
       for _f in $(printf '%s\n' "${!_fmap[@]}" | sort); do
         _bn="${_f##*/}"; _sid="${_bn//[^A-Za-z0-9_]/_}"
         printf '  subgraph %s["%s"]\n' "$_sid" "$_bn"
@@ -620,7 +841,7 @@ _write_mermaid() {
 }
 
 # =============================================================================
-# DOT WRITER
+# DOT writer
 # =============================================================================
 _write_dot() {
   local _out_file=$1
@@ -677,52 +898,31 @@ _write_dot() {
 }
 
 # =============================================================================
-# TIMING FOOTER
-# =============================================================================
-# Timestamps (ms integers captured via _ts_ms):
-#   _T_START        before perl invocation
-#   _T_BACKEND_END  after perl + bash array loading
-#   _T_PRINT_START  before terminal render
-#   _T_PRINT_END    after  terminal render
-#   _T_END          after all --out-* writes
-#
-# Line counters:
-#   _LINES_READ     raw source lines across all input files  (from perl)
-#   _LINES_CLI      lines written to terminal                (from wc -l on tmp)
-#   _LINES_FILE     lines written to all --out-* files       (accumulated via wc -l)
-#
-# Timing rows:
-#   graph  = perl parse + comment-strip + call-edge analysis + bash array load
-#   print  = ASCII tree traversal + summary table render (terminal)
-#   file   = all --out-* writes combined (row omitted when no files requested)
-#   total  = wall time of the entire run
-#
-# Line rows:
-#   read   = raw source lines consumed
-#   write  = cli lines
-#            file lines  (file part omitted when no files requested)
+# Performance footer (only when -p)
 # =============================================================================
 _LINES_CLI=0
 _LINES_FILE=0
 
 _print_timing() {
+  [[ $_SHOW_PERF -eq 1 ]] || return 0
+
   local _t_graph=$(( _T_BACKEND_END - _T_START      ))
   local _t_print=$(( _T_PRINT_END   - _T_PRINT_START ))
   local _t_file=$((  _T_END         - _T_PRINT_END   ))
   local _t_total=$(( _T_END         - _T_START       ))
-  local _W=8   # right-aligned value column width
+  local _W=8
 
   printf '\n'
-  printf '  %-8s  %*s ms\n' "mapping"  "$_W" "$_t_graph"
-  printf '  %-8s  %*s ms\n' "print"  "$_W" "$_t_print"
+  printf '  %-8s  %*s ms\n' "mapping" "$_W" "$_t_graph"
+  printf '  %-8s  %*s ms\n' "print"   "$_W" "$_t_print"
   if [[ -n "$_OUT_TXT$_OUT_MMD$_OUT_DOT" ]]; then
-    printf '  %-8s  %*s ms\n' "file" "$_W" "$_t_file"
+    printf '  %-8s  %*s ms\n' "file"  "$_W" "$_t_file"
   fi
   printf '  %s\n' "$(printf '%0.s─' {1..22})"
-  printf '  %-8s  %*s ms\n' "total"  "$_W" "$_t_total"
+  printf '  %-8s  %*s ms\n' "total"   "$_W" "$_t_total"
 
   printf '\n'
-  printf '  %-8s  %*s lines (c++)\n' "read"   "$_W" "$_LINES_READ"
+  printf '  %-8s  %*s lines (src)\n' "read"  "$_W" "$_LINES_READ"
   printf '  %-8s  %*s lines (cli)\n' "write" "$_W" "$_LINES_CLI"
   if [[ -n "$_OUT_TXT$_OUT_MMD$_OUT_DOT" ]]; then
     printf '            %*s lines (file)\n' "$_W" "$_LINES_FILE"
@@ -731,7 +931,7 @@ _print_timing() {
 }
 
 # =============================================================================
-# TERMINAL OUTPUT
+# Terminal output
 # =============================================================================
 _T_PRINT_START=$(_ts_ms)
 _TMP_CLI=$(mktemp)
@@ -742,7 +942,7 @@ cat "$_TMP_CLI"
 rm -f "$_TMP_CLI"
 
 # =============================================================================
-# FILE OUTPUTS
+# File outputs
 # =============================================================================
 if [[ -n "$_OUT_TXT" ]]; then
   _print_ascii 0 > "$_OUT_TXT"
@@ -759,8 +959,9 @@ fi
 if [[ -n "$_OUT_DOT" ]]; then
   _write_dot "$_OUT_DOT"
   _LINES_FILE=$(( _LINES_FILE + $(wc -l < "$_OUT_DOT") ))
-  printf '  -> DOT    : %s  (render: dot -Tsvg -o graph.svg %s)\n' "$_OUT_DOT" "$_OUT_DOT"
+  printf '  -> DOT         : %s  (render: dot -Tsvg -o graph.svg %s)\n' "$_OUT_DOT" "$_OUT_DOT"
 fi
 
 _T_END=$(_ts_ms)
 _print_timing
+
