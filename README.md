@@ -1,7 +1,7 @@
 # calltree.sh
 
-ASCII call tree generator for C++ files, single file or entire project.  
-Parses function definitions and call edges statically using Perl, then renders them as a tree in the terminal.  
+ASCII call tree generator for **C, C++, Python, Rust, Go, Java, JavaScript, TypeScript, Ruby, Lua, PHP, Perl, C#, Kotlin, Scala, Swift** and ~25 other languages — single file or entire project.
+Parses function definitions via [universal-ctags](https://github.com/universal-ctags/ctags) and call edges via a small Perl backend, then renders them as a tree in the terminal.
 Supports cross-file call resolution, recursive directory scanning, whitelist/blacklist filtering, and exports to Mermaid, Graphviz DOT, and plain text.
 
 ```
@@ -30,8 +30,35 @@ ingest()  -> void
 | Dep | Notes |
 |-----|-------|
 | `bash` | >= 4.0 |
-| `perl` | Standard on Linux and macOS, no extra modules needed |
+| `perl` | Standard on Linux and macOS; only `JSON::PP` is needed, which has been in Perl core since 5.14 |
+| `universal-ctags` | With `+json` feature. Not exuberant-ctags. |
 | `graphviz` | Optional — only needed to render `.dot` output (`dot -Tsvg`) |
+
+Install universal-ctags:
+
+```bash
+# Debian / Ubuntu
+sudo apt install universal-ctags
+
+# Fedora
+sudo dnf install ctags
+
+# Arch
+sudo pacman -S ctags
+
+# macOS
+brew install universal-ctags
+
+# FreeBSD
+pkg install universal-ctags
+```
+
+Verify:
+
+```bash
+ctags --version | head -1          # must say "Universal Ctags"
+ctags --list-features | grep json  # must list "json"
+```
 
 ---
 
@@ -55,47 +82,76 @@ cp calltree.sh ~/.local/bin/calltree
 
 ```
 # Single file
-./calltree.sh <file.cpp> [OPTIONS]
+./calltree.sh -F <file> [OPTIONS]
 
 # Multiple explicit files
-./calltree.sh file1.cpp file2.cpp file3.hpp [OPTIONS]
+./calltree.sh -F file1.cpp -F file2.cpp -F file3.hpp [OPTIONS]
 
 # Recursive directory scan
-./calltree.sh --dir <src/> [OPTIONS]
+./calltree.sh -D <src/> [OPTIONS]
 
 # Directory scan with filtering
-./calltree.sh --dir <src/> --include "*.cpp" --exclude "test_*" [OPTIONS]
+./calltree.sh -D <src/> -I "*.cpp" -E "test_*" [OPTIONS]
 ```
 
 ### Options
 
 | Flag | Argument | Default | Description |
 |------|----------|---------|-------------|
+| `-F` | `FILE` | — | Input **F**ile. Repeatable — multiple `-F` flags accumulate |
+| `-D` | `DIR` | — | Recursively scan **D**irectory. Repeatable |
+| `-I` | `PATTERN` | — | **I**nclude glob, basename match. Repeatable. Applied before `-E`. When absent, all files pass |
+| `-E` | `PATTERN` | — | **E**xclude glob, basename match. Repeatable. Takes precedence over `-I` matches |
+| `-f` | `FUNC` | auto | **f**ind function: start tree from it. Accepts a bare function name (auto-picks the first file that defines it) or a fully-qualified key `filepath::::funcname` to pin a specific file |
 | `--depth` | `N` | `4` | Recursion depth in the tree |
-| `--root` | `FUNC` | auto | Start tree from a specific function. In multi-file mode, accepts either a bare function name (auto-picks the first file that defines it) or a fully-qualified key `filepath::::funcname` to pin a specific file |
-| `--dir` | `DIR` | — | Recursively scan `DIR` for C++ files (`.cpp .hpp .cc .cxx .h .hxx`). Repeatable — multiple `--dir` flags accumulate |
-| `--include` | `PATTERN` | — | Keep only files whose **basename** matches this glob. Repeatable. Applied before `--exclude`. When absent, all files pass |
-| `--exclude` | `PATTERN` | — | Drop files whose **basename** matches this glob. Repeatable. Takes precedence over `--include` matches |
-| `--color` | — | off | Colorize function names in terminal using 256-color ANSI |
-| `--see` | — | off | Always expand repeated subtrees (disable `[seen]` compression) |
-| `--out-mermaid` | `[FILE]` | `<base>.mmd` | Write Mermaid graph. In multi-file mode, wraps each file's functions in a named subgraph |
-| `--out-dot` | `[FILE]` | `<base>.dot` | Write Graphviz DOT. In multi-file mode, wraps each file's functions in a cluster |
-| `--out-txt` | `[FILE]` | `<base>.txt` | Write plain-text tree (no ANSI codes) |
+| `-out-T` | `[FILE]` | `<base>.txt` | Write plain-**T**ext tree (no ANSI codes) |
+| `-out-M` | `[FILE]` | `<base>.mmd` | Write **M**ermaid graph. Multi-file mode wraps each file's functions in a named subgraph |
+| `-out-D` | `[FILE]` | `<base>.dot` | Write Graphviz **D**OT. Multi-file mode wraps each file's functions in a cluster |
+| `-c` | — | off | **C**olorize function names in terminal using 256-color ANSI |
+| `-s` | — | off | **S**ee — always expand repeated subtrees (disable `[seen]` compression) |
+| `-p` | — | off | Show **p**erformance footer: mapping/print/file timings plus line counters |
+| `-v` | — | — | Print **v**ersion and exit |
+| `-w` | — | — | Print absolute path to this script (**w**here) and exit |
+| `-h`, `--help` | — | — | Show help and exit |
 
-File arguments for `--out-*` flags are optional. When omitted, the output path is derived automatically:
+File arguments for `-out-*` flags are optional. When omitted, the output path is derived automatically:
 
 ```bash
 # Single file
-./calltree.sh src/foo.cpp --out-mermaid           # → src/foo.mmd
-./calltree.sh src/foo.cpp --out-mermaid graph.mmd # → graph.mmd
+./calltree.sh -F src/foo.cpp -out-M              # → src/foo.mmd
+./calltree.sh -F src/foo.cpp -out-M graph.mmd    # → graph.mmd
 
-# --dir
-./calltree.sh --dir src/ --out-mermaid            # → src/calltree.mmd
-./calltree.sh --dir src/ --out-dot                # → src/calltree.dot
+# -D
+./calltree.sh -D src/ -out-M                     # → src/calltree.mmd
+./calltree.sh -D src/ -out-D                     # → src/calltree.dot
 
-# Multiple positional files (no --dir)
-./calltree.sh a.cpp b.cpp --out-dot               # → ./calltree.dot
+# Multiple -F files (no -D)
+./calltree.sh -F a.cpp -F b.cpp -out-D           # → ./calltree.dot
 ```
+
+### Supported languages
+
+Anything universal-ctags can parse is a candidate; the backend has an explicit kind allow-list for the languages below and a permissive fallback for everything else.
+
+| Language | Extensions | Return types |
+|---|---|---|
+| C / C++ | `.c .h .cpp .hpp .cc .cxx .hxx` | yes |
+| C# | `.cs` | yes |
+| Python | `.py` | `-` (no annotations) |
+| Go | `.go` | yes |
+| Rust | `.rs` | yes (parsed from signature `-> T`) |
+| Java | `.java` | yes |
+| JavaScript / TypeScript | `.js .jsx .ts .tsx` | partial (TS yes) |
+| Ruby | `.rb` | `-` |
+| Lua | `.lua` | `-` |
+| PHP | `.php` | yes |
+| Perl | `.pl .pm` | `-` |
+| Kotlin | `.kt` | yes |
+| Scala | `.scala` | yes |
+| Swift | `.swift` | yes |
+| Haskell, OCaml, F# | `.hs .ml .fs` | best effort |
+
+For languages without type annotations (Python, Ruby, Lua, Perl), the return type column shows `-`.
 
 ---
 
@@ -104,13 +160,13 @@ File arguments for `--out-*` flags are optional. When omitted, the output path i
 ### Basic tree
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp
+./calltree.sh -F src/sink/rntuple.hpp
 ```
 
 ### Limit depth
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp --depth 2
+./calltree.sh -F src/sink/rntuple.hpp --depth 2
 ```
 
 ```
@@ -125,7 +181,7 @@ ingest()  -> void
 ### Start from a specific function
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp --root rotate
+./calltree.sh -F src/sink/rntuple.hpp -f rotate
 ```
 
 ```
@@ -141,11 +197,11 @@ rotate()  -> void
 ### Terminal colors
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp --color
+./calltree.sh -F src/sink/rntuple.hpp -c
 ```
 
-Each function name is assigned a unique 256-color ANSI color.  
-Colors are derived from the sorted function list so they stay stable across runs.  
+Each function name is assigned a unique 256-color ANSI color.
+Colors are derived from the sorted function list so they stay stable across runs.
 The usable palette is clamped to indices `40–210` — near-black and near-white tones are excluded.
 
 ```
@@ -154,10 +210,52 @@ color index = 40 + round(170 * i / (N - 1))
 
 Colors also apply in the summary table's `calls` column.
 
+### Performance footer
+
+```bash
+./calltree.sh -F src/sink/rntuple.hpp -p
+```
+
+Shows backend timing, render timing, and line counters for source and terminal output:
+
+```
+  mapping        207 ms
+  print           43 ms
+  ──────────────────────
+  total          250 ms
+
+  read           127 lines (src)
+  write           70 lines (cli)
+```
+
+When combined with any `-out-*` flag, a `file` row is added to both the timings and the line counters:
+
+```
+  mapping        207 ms
+  print           43 ms
+  file           112 ms
+  ──────────────────────
+  total          362 ms
+
+  read           127 lines (src)
+  write           70 lines (cli)
+                 206 lines (file)
+```
+
+| Row | Meaning |
+|---|---|
+| `mapping` | ctags parse + perl call-edge analysis + bash array load |
+| `print` | Tree traversal and summary table render for the terminal |
+| `file` | All `-out-*` file writes combined (only shown when at least one is requested) |
+| `total` | Wall time of the entire run |
+| `read` | Raw source lines consumed |
+| `write / cli` | Lines written to the terminal |
+| `write / file` | Lines written across all `-out-*` files (only when requested) |
+
 ### Export to Mermaid
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp --out-mermaid
+./calltree.sh -F src/sink/rntuple.hpp -out-M
 ```
 
 Writes `src/sink/rntuple.mmd`, fenced in ` ```mermaid ``` ` blocks so it renders directly when pasted into a GitHub README, GitLab wiki, or Notion page.
@@ -191,7 +289,7 @@ graph TD
 ### Export to Graphviz DOT
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp --out-dot
+./calltree.sh -F src/sink/rntuple.hpp -out-D
 ```
 
 Render the `.dot` file to SVG or PNG:
@@ -208,7 +306,7 @@ Node labels include the return type and call frequency.
 ### Export to plain text
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp --out-txt
+./calltree.sh -F src/sink/rntuple.hpp -out-T
 ```
 
 Identical layout to the terminal output, with no ANSI codes — safe to `grep`, `diff`, or commit.
@@ -239,22 +337,21 @@ rotate()  -> void
 ### All outputs at once
 
 ```bash
-./calltree.sh src/sink/rntuple.hpp --color --out-mermaid --out-dot --out-txt
+./calltree.sh -F src/sink/rntuple.hpp -c -s -p -out-T -out-M -out-D
 ```
 
 ---
 
 ## Multi-file examples
 
-Multi-file mode is activated whenever more than one file is provided, either via multiple positional arguments or via `--dir`. All original flags continue to work identically; the only visual changes are the `[basename]` annotations in the tree and an extra `file` column in the summary table.
+Multi-file mode is activated whenever more than one file is provided, either via multiple `-F` flags or via `-D`. All flags continue to work identically; the only visual changes are the `[basename]` annotations in the tree and an extra `file` column in the summary table.
 
 ### Two explicit files
 
 ```bash
-./calltree.sh src/core.cpp src/net.cpp --depth 3
+./calltree.sh -F src/core.cpp -F src/net.cpp --depth 3
 ```
 
-<!-- PLACEHOLDER: terminal output showing cross-file tree with [basename] annotations -->
 ```
   2 files  (depth=3)
 
@@ -272,6 +369,7 @@ dispatch()  [core.cpp]  -> void
   ────────────────────────────  ──────────────────────  ──────  ────────────────────────────────────────  ──────────────────────
   make_key                      core.cpp                     1  format                                    std::string
   dispatch                      core.cpp                     0  make_key send                             void
+  send                          net.cpp                      1  encode flush                              void
   ...
 ```
 
@@ -280,50 +378,50 @@ Cross-file calls are shown inline in the tree. The `[basename]` tag after each f
 ### Recursive directory scan
 
 ```bash
-./calltree.sh --dir src/ --depth 4
+./calltree.sh -D src/ --depth 4
 ```
 
-Scans `src/` recursively for all `.cpp .hpp .cc .cxx .h .hxx` files (sorted, deduplicated), analyzes them as a single unit, and prints the unified call tree.
-
-<!-- PLACEHOLDER: real project tree showing cross-file resolution across multiple files -->
+Scans `src/` recursively for all supported source files (sorted, deduplicated), analyzes them as a single unit, and prints the unified call tree.
 
 ### Directory scan with filtering
 
 ```bash
 # Only implementation files, not headers
-./calltree.sh --dir src/ --include "*.cpp"
+./calltree.sh -D src/ -I "*.cpp"
 
 # Exclude generated and test files
-./calltree.sh --dir src/ --exclude "*.pb.cc" --exclude "test_*" --exclude "*_mock.*"
+./calltree.sh -D src/ -E "*.pb.cc" -E "test_*" -E "*_mock.*"
 
 # Combined — only implementation, no tests
-./calltree.sh --dir src/ --include "*.cpp" --exclude "test_*"
+./calltree.sh -D src/ -I "*.cpp" -E "test_*"
+
+# Mixed-language project: only Rust and Go
+./calltree.sh -D src/ -I "*.rs" -I "*.go"
 ```
 
-`--include` and `--exclude` both match against the **basename** of each file using standard shell glob syntax. Processing order: `--include` is applied first (if any are specified); then `--exclude` is applied to the surviving set. Both flags are repeatable.
+`-I` and `-E` both match against the **basename** of each file using standard shell glob syntax. Processing order: `-I` is applied first (if any are specified); then `-E` is applied to the surviving set. Both flags are repeatable.
 
 ### Rooting across files
 
 ```bash
 # Bare function name — auto-picks the first file that defines it
-./calltree.sh --dir src/ --root dispatch
+./calltree.sh -D src/ -f dispatch
 
 # Fully-qualified key — pin to a specific file when the name is ambiguous
-./calltree.sh --dir src/ --root "src/core.cpp::::dispatch"
+./calltree.sh -D src/ -f "src/core.cpp::::dispatch"
 ```
 
-The `FILE::::FUNC` key syntax uses four colons as a separator (safe since `::::` cannot appear in C++ identifiers or typical paths).
+The `FILE::::FUNC` key syntax uses four colons as a separator, safe because `::::` cannot appear in typical source-code identifiers or paths.
 
 ### Multi-file Mermaid export
 
 ```bash
-./calltree.sh --dir src/ --out-mermaid
+./calltree.sh -D src/ -out-M
 # → src/calltree.mmd
 ```
 
-Each file's functions are grouped in a named `subgraph`. Cross-file edges connect nodes across subgraphs automatically.
+Each file's functions are grouped in a named `subgraph`. Cross-file edges connect nodes across subgraphs automatically. Node IDs use `SAFE_BASENAME_funcname` to stay unique even when two files define a function with the same name.
 
-```markdown
 ```mermaid
 graph TD
   subgraph core_cpp["core.cpp"]
@@ -334,217 +432,24 @@ graph TD
     net_cpp_send["void send()"]
     net_cpp_flush["void flush()"]
     net_cpp_encode["std::string encode()"]
-    ...
+    net_cpp_format["int format()"]
   end
 
   core_cpp_make_key --> net_cpp_format
   core_cpp_dispatch --> core_cpp_make_key
   core_cpp_dispatch --> net_cpp_send
-  ...
-```​
+  net_cpp_send --> net_cpp_encode
+  net_cpp_send --> net_cpp_flush
 ```
-
-Node IDs use `SAFE_BASENAME_funcname` to stay unique even when two files define a function with the same name.
-
-```mermaid
-graph TD
-  subgraph memory_hpp["memory.hpp"]
-    memory_hpp_aligned_alloc_impl["void* aligned_alloc_impl()"]
-    memory_hpp_aligned_free_impl["void aligned_free_impl()"]
-    memory_hpp_AlignedBuffer["~ AlignedBuffer()"]
-    memory_hpp_data_[": size_(o.size_), data_()"]
-    memory_hpp_resize["void resize()"]
-    memory_hpp_data["T* data()"]
-    memory_hpp_size["usize size()"]
-    memory_hpp_empty["bool empty()"]
-    memory_hpp_begin["T* begin()"]
-    memory_hpp_end["T* end()"]
-    memory_hpp_release["void release()"]
-    memory_hpp_Arena["~ Arena()"]
-    memory_hpp_alloc["void* alloc()"]
-    memory_hpp_create["T* create()"]
-    memory_hpp_reset["void reset()"]
-    memory_hpp_used["usize used()"]
-    memory_hpp_capacity["usize capacity()"]
-  end
-  subgraph types_hpp["types.hpp"]
-    types_hpp_a["Color(u32 r, u32 g, u32 b, u32 a = 255) : r(r), g(g), b(b), a()"]
-    types_hpp_black["Color black()"]
-    types_hpp_white["Color white()"]
-    types_hpp_red["Color red()"]
-    types_hpp_blue["Color blue()"]
-    types_hpp_green["Color green()"]
-    types_hpp_orange["Color orange()"]
-    types_hpp_purple["Color purple()"]
-    types_hpp_gray["Color gray()"]
-    types_hpp_with_alpha["Color with_alpha()"]
-    types_hpp_empty["bool empty()"]
-    types_hpp_expand["void expand()"]
-    types_hpp_merge["void merge()"]
-    types_hpp_width["f64 width()"]
-    types_hpp_height["f64 height()"]
-    types_hpp_h["Rect(f64 x, f64 y, f64 w, f64 h) : x(x), y(y), w(w), h()"]
-  end
-  subgraph series_hpp["series.hpp"]
-    series_hpp_empty["bool empty()"]
-    series_hpp_y_["Series(const f64* x, const f64* y, usize n) : x_(n), y_()"]
-    series_hpp_x_view["DataView x_view()"]
-    series_hpp_y_view["DataView y_view()"]
-    series_hpp_size["usize size()"]
-    series_hpp_bounds["const BBox& bounds()"]
-    series_hpp_x_data["f64* x_data()"]
-    series_hpp_y_data["f64* y_data()"]
-    series_hpp_recompute_bounds["void recompute_bounds()"]
-    series_hpp_decimate["Series decimate()"]
-  end
-  subgraph ppm_writer_hpp["ppm_writer.hpp"]
-    ppm_writer_hpp_write_ppm["bool write_ppm()"]
-  end
-  subgraph figure_hpp["figure.hpp"]
-    figure_hpp_fig_h_[", fig_w_(width), fig_h_()"]
-    figure_hpp_set_title["void set_title()"]
-    figure_hpp_set_xlabel["void set_xlabel()"]
-    figure_hpp_set_ylabel["void set_ylabel()"]
-    figure_hpp_grid["void grid()"]
-    figure_hpp_axis["void axis()"]
-    figure_hpp_legend["void legend()"]
-    figure_hpp_layout["void layout()"]
-    figure_hpp_text["void text()"]
-    figure_hpp_perf["void perf()"]
-    figure_hpp_plot["PlotCommand plot()"]
-    figure_hpp_plot_ref["PlotCommand plot_ref()"]
-    figure_hpp_render["void render()"]
-    figure_hpp_canvas["const rendering::Canvas& canvas()"]
-    figure_hpp_entries["const std::vector<PlotEntry>& entries()"]
-    figure_hpp_add_entry["void add_entry()"]
-    figure_hpp_compute_plot_area["void compute_plot_area()"]
-    figure_hpp_compute_data_bounds["void compute_data_bounds()"]
-    figure_hpp_setup_transform["void setup_transform()"]
-    figure_hpp_render_grid["void render_grid()"]
-    figure_hpp_render_axes["void render_axes()"]
-    figure_hpp_render_data["void render_data()"]
-    figure_hpp_render_legend["void render_legend()"]
-    figure_hpp_render_title_and_labels["void render_title_and_labels()"]
-  end
-  subgraph plot_command_hpp["plot_command.hpp"]
-    plot_command_hpp_data["PlotCommand& data()"]
-    plot_command_hpp_color["PlotCommand& color()"]
-    plot_command_hpp_width["PlotCommand& width()"]
-    plot_command_hpp_alpha["PlotCommand& alpha()"]
-    plot_command_hpp_label["PlotCommand& label()"]
-    plot_command_hpp_line["PlotCommand& line()"]
-    plot_command_hpp_marker["PlotCommand& marker()"]
-  end
-  subgraph plot_entry_hpp["plot_entry.hpp"]
-    plot_entry_hpp_x_view["data::DataView x_view()"]
-    plot_entry_hpp_y_view["data::DataView y_view()"]
-    plot_entry_hpp_size["usize size()"]
-    plot_entry_hpp_bounds["BBox bounds()"]
-  end
-  subgraph canvas_hpp["canvas.hpp"]
-    canvas_hpp_clear["void clear()"]
-    canvas_hpp_set_pixel["void set_pixel()"]
-    canvas_hpp_draw_line["void draw_line()"]
-    canvas_hpp_fill_rect["void fill_rect()"]
-    canvas_hpp_draw_rect["void draw_rect()"]
-    canvas_hpp_draw_circle["void draw_circle()"]
-    canvas_hpp_data["u8* data()"]
-    canvas_hpp_width["u32 width()"]
-    canvas_hpp_height["u32 height()"]
-    canvas_hpp_stride["usize stride()"]
-    canvas_hpp_pack["u32 pack()"]
-    canvas_hpp_draw_line_aa["void draw_line_aa()"]
-    canvas_hpp_fpart["f64 fpart()"]
-    canvas_hpp_rfpart["f64 rfpart()"]
-    canvas_hpp_plot["void plot()"]
-  end
-  subgraph text_hpp["text.hpp"]
-    text_hpp_get_glyph["const Glyph& get_glyph()"]
-    text_hpp_draw_text["void draw_text()"]
-    text_hpp_draw_text_vertical["void draw_text_vertical()"]
-    text_hpp_text_width["i32 text_width()"]
-    text_hpp_text_height["i32 text_height()"]
-    text_hpp_text_width_vertical["i32 text_width_vertical()"]
-    text_hpp_text_height_vertical["i32 text_height_vertical()"]
-  end
-  subgraph tick_engine_hpp["tick_engine.hpp"]
-    tick_engine_hpp_compute["std::vector<Tick> compute()"]
-    tick_engine_hpp_compute_linear["std::vector<Tick> compute_linear()"]
-    tick_engine_hpp_compute_log["std::vector<Tick> compute_log()"]
-    tick_engine_hpp_format_value["std::string format_value()"]
-    tick_engine_hpp_format_log_value["std::string format_log_value()"]
-  end
-  subgraph transform_hpp["transform.hpp"]
-    transform_hpp_set["void set()"]
-    transform_hpp_to_px_x["f64 to_px_x()"]
-    transform_hpp_to_px_y["f64 to_px_y()"]
-    transform_hpp_to_data_x["f64 to_data_x()"]
-    transform_hpp_to_data_y["f64 to_data_y()"]
-    transform_hpp_data_box["const BBox& data_box()"]
-    transform_hpp_pixel_rect["const Rect& pixel_rect()"]
-    transform_hpp_safe_log10["f64 safe_log10()"]
-  end
-
-  memory_hpp_AlignedBuffer --> memory_hpp_release
-  memory_hpp_resize --> memory_hpp_release
-  memory_hpp_resize --> memory_hpp_aligned_alloc_impl
-  memory_hpp_release --> memory_hpp_aligned_free_impl
-  memory_hpp_Arena --> memory_hpp_aligned_free_impl
-  memory_hpp_create --> memory_hpp_alloc
-  types_hpp_merge --> types_hpp_expand
-  series_hpp_y_ --> series_hpp_recompute_bounds
-  figure_hpp_render --> figure_hpp_compute_plot_area
-  figure_hpp_render --> figure_hpp_compute_data_bounds
-  figure_hpp_render --> figure_hpp_setup_transform
-  figure_hpp_render --> figure_hpp_render_grid
-  figure_hpp_render --> figure_hpp_render_axes
-  figure_hpp_render --> figure_hpp_render_data
-  figure_hpp_render --> figure_hpp_render_legend
-  figure_hpp_render --> figure_hpp_render_title_and_labels
-  figure_hpp_render_grid --> tick_engine_hpp_compute
-  figure_hpp_render_axes --> tick_engine_hpp_compute
-  figure_hpp_render_axes --> text_hpp_text_width
-  figure_hpp_render_axes --> text_hpp_draw_text
-  figure_hpp_render_data --> series_hpp_decimate
-  figure_hpp_render_legend --> text_hpp_text_height
-  figure_hpp_render_legend --> text_hpp_text_width
-  figure_hpp_render_legend --> text_hpp_draw_text
-  figure_hpp_render_title_and_labels --> text_hpp_text_width
-  figure_hpp_render_title_and_labels --> text_hpp_draw_text
-  figure_hpp_render_title_and_labels --> text_hpp_text_height_vertical
-  figure_hpp_render_title_and_labels --> text_hpp_draw_text_vertical
-  canvas_hpp_clear --> canvas_hpp_pack
-  canvas_hpp_draw_line --> canvas_hpp_draw_line_aa
-  canvas_hpp_fill_rect --> canvas_hpp_set_pixel
-  canvas_hpp_draw_rect --> canvas_hpp_draw_line
-  canvas_hpp_draw_circle --> canvas_hpp_set_pixel
-  canvas_hpp_draw_line_aa --> canvas_hpp_rfpart
-  canvas_hpp_draw_line_aa --> canvas_hpp_plot
-  canvas_hpp_draw_line_aa --> canvas_hpp_fpart
-  canvas_hpp_rfpart --> canvas_hpp_fpart
-  canvas_hpp_plot --> canvas_hpp_set_pixel
-  text_hpp_get_glyph --> transform_hpp_set
-  text_hpp_draw_text --> text_hpp_get_glyph
-  text_hpp_draw_text_vertical --> text_hpp_get_glyph
-  tick_engine_hpp_compute --> tick_engine_hpp_compute_log
-  tick_engine_hpp_compute --> tick_engine_hpp_compute_linear
-  tick_engine_hpp_compute_linear --> tick_engine_hpp_format_value
-  tick_engine_hpp_compute_log --> tick_engine_hpp_format_log_value
-  transform_hpp_set --> transform_hpp_safe_log10
-  transform_hpp_to_px_x --> transform_hpp_safe_log10
-  transform_hpp_to_px_y --> transform_hpp_safe_log10
-```
-
 
 ### Multi-file DOT export
 
 ```bash
-./calltree.sh --dir src/ --out-dot
+./calltree.sh -D src/ -out-D
 dot -Tsvg -o graph.svg src/calltree.dot
 ```
 
 Each file becomes a `subgraph cluster_N` with its own label and a light grey background. Cross-cluster edges are drawn between the full-path node IDs.
-
 
 ![Multi-file DOT diagram](misc/dot_multi.svg)
 
@@ -583,46 +488,80 @@ The table is always printed below the tree. In multi-file mode it gains a `file`
 | `file` | Basename of the file where the function is defined *(multi-file mode only)* |
 | `called` | Total number of times this function is invoked across all callers in the analyzed set |
 | `calls` | Space-separated list of functions this function calls (display names only, stripped of file path) |
-| `return type` | Extracted from the line preceding the function definition |
+| `return type` | Extracted from ctags `typeref` or parsed from the signature; `-` for untyped languages |
 
 ---
 
 ## How it works
 
+### Pipeline
+
+```
+  universal-ctags  ──(JSON tags)──▶  perl backend  ──(CALLS/TYPES/FREQ)──▶  bash renderer
+```
+
+1. **ctags** parses every input file and emits one JSON line per tag (function/method/sub) with fields: `name`, `path`, `language`, `line`, `end`, `kind`, `typeref`, `signature`.
+2. **perl** consumes the stream, filters by a per-language kind allow-list, builds a global `funcname → [files]` registry, re-opens each source file, extracts the body range `line..end` for each function, and scans it for callees matching known names (excluding method calls via a `(?<![>.])` lookbehind).
+3. **bash** loads the emitted `CALLS`/`TYPES`/`FREQ` tables into associative arrays and renders the tree, summary table, and optional `-out-*` exports.
+
 ### Single-file vs multi-file
 
-In single-file mode, function keys are bare names. In multi-file mode, the internal key is `filepath::::funcname` throughout — in the tree, the table, and the export files. The four-colon separator is chosen because it cannot appear in a C++ identifier. Display always strips the path back to a bare function name; the file is shown separately as an annotation or table column.
+In single-file mode, function keys are bare names. In multi-file mode, the internal key is `filepath::::funcname` throughout — in the tree, the table, and the export files. The four-colon separator is chosen because it cannot appear in most language identifiers. Display always strips the path back to a bare function name; the file is shown separately as an annotation or table column.
 
 ### What counts as a function
 
-The Perl parser matches any identifier of the form:
+ctags classifies each tag with a language-specific `kind`. The backend has an explicit allow-list per language:
 
-```
-name(...) [const|override|noexcept...] {
-```
+| Language | Accepted kinds |
+|---|---|
+| C, C++ | `function` |
+| C# | `method` |
+| Python | `function`, `member` (class methods) |
+| Go | `func` |
+| Rust | `function`, `method` |
+| Java, Kotlin | `method` |
+| JavaScript, TypeScript | `function`, `method`, `getter`, `setter`, `generator` |
+| Ruby | `method`, `singletonMethod` |
+| Lua, PHP | `function` |
+| Perl | `subroutine` |
+| Scala, Swift | `method`, `function` |
 
-This captures free functions, class methods, and constructors. Control-flow keywords (`if`, `for`, `while`, `switch`, etc.) are explicitly excluded. Member calls (`obj.foo()`, `ptr->foo()`) are excluded by rejecting identifiers immediately preceded by `.` or `->`.
+For any other language, the default fallback accepts `function`, `method`, `func`, `fn`, `subroutine`.
 
 ### Return type extraction
 
-For each matched definition, the parser walks backward to the start of the line, strips scope prefixes (`Foo::`) and storage-class keywords (`static`, `inline`, `constexpr`, `consteval`, `constinit`, `noexcept`, `requires`, `co_await`, `co_return`, `co_yield`, `virtual`, `explicit`, `extern`, `friend`), and treats whatever remains as the return type. Falls back to `void` when the prefix is empty or syntactic noise only.
+Three strategies, tried in order:
+
+1. **ctags `typeref` field** — populated for C, C++, Go, Java, TypeScript, Kotlin, PHP, and others. Contains the raw type, prefixed with `typename:` which is stripped.
+2. **Signature parsing** — Rust and some other languages embed the return type inside the signature as `(args) -> Type`. The backend extracts the `-> ...` tail when `typeref` is missing.
+3. **Fallback** — `void` for C/C++ when nothing else matches; `-` for languages without static return types (Python, Ruby, Lua, Perl, untyped JS).
 
 ### Call edge detection
 
-For every function `F`, `extract_body()` locates its braced body by counting brace depth from the opening `{`. The body text is then scanned for occurrences of every other known function name followed by `(`, not preceded by `.` or `->`. Each hit is counted; the total across all callers is the `called` frequency in the table.
+For each function, the backend reads lines `line..end` from the source file, strips comments and string literals (best-effort, not language-perfect), then scans for `\bname\s*\(` where `name` is in the global function registry. Identifiers preceded by `.` or `->` (method calls) are excluded via a lookbehind — this works uniformly for C/C++/Rust/Go/Java/Python/JS.
 
 ### Cross-file call resolution
 
-When multiple files are analyzed, the Perl pass reads all sources in a single invocation. Pass 1 builds a global `funcname → [files that define it]` registry. Pass 2 scans each function body and, for every callee found in the global registry, applies this resolution rule:
+The Perl pass runs once on all input files. Pass 1 builds a global `funcname → [files that define it]` registry. Pass 2 scans each function body and, for every callee found in the global registry, applies this rule:
 
 1. If the callee is defined in the **same file** as the caller, use that definition.
 2. Otherwise, use the **first file** in definition-order that defines the callee.
 
 This matches compiler lookup semantics for non-overloaded free functions and ensures that same-file helper calls are never misattributed to a homonymous function in another file.
 
-### File collection (`--dir`)
+### File collection (`-D`)
 
-`find` is invoked with `-print0` and the result piped through `sort -z`, so filenames with spaces and special characters are handled correctly. The standard C++ extensions searched are `.cpp .hpp .cc .cxx .h .hxx`. `--include` and `--exclude` patterns are applied in bash using `case`/glob matching against basenames only.
+`find` is invoked with `-print0` and the result piped through `sort -z`, so filenames with spaces and special characters are handled correctly. The scanner recognises these extensions out of the box:
+
+```
+.c  .h   .cpp .hpp .cc  .cxx .hxx
+.cs .py  .rs  .go  .java
+.js .jsx .ts  .tsx
+.rb .lua .php .pl  .pm
+.scala .kt .swift .hs .ml .fs
+```
+
+`-I` and `-E` patterns are applied in bash using `case`/glob matching against basenames only.
 
 ### Cycle detection
 
@@ -632,9 +571,11 @@ The tree emitter threads a colon-delimited `VISITED` string down the call stack.
 
 ## Limitations
 
-- The parser is regex-based, not a full AST. Complex declarations (multi-line signatures, macro-wrapped definitions, trailing return types) may not be detected.
-- Template specialisations (`process<T>` vs `process<U>`) map to the same base name.
-- `#define`d pseudo-functions are not detected.
-- Cross-file resolution picks the **first** matching definition when a name is defined in multiple files. There is no overload resolution or namespace awareness.
-- File paths containing spaces are supported by the `--dir` scanner but must be quoted carefully when passed as positional arguments.
-- File paths containing the literal string `::::` are not supported (this sequence is reserved as the internal separator).
+- Call detection is a name-in-body scan, not a true semantic analysis. Overloaded names in different files collapse to the first definition.
+- **Method calls** (`obj.foo()`, `ptr->foo()`, `self.foo()`) are intentionally excluded to keep the tree readable for free-function-heavy code. OO-heavy codebases will see incomplete graphs.
+- Template and generic specialisations (`process<T>` vs `process<U>`, `process[Int]`, etc.) map to the same base name.
+- Macro-defined pseudo-functions are not detected, since ctags does not preprocess.
+- Cross-file resolution picks the **first** matching definition when a name is defined in multiple files. There is no namespace awareness or overload resolution.
+- File extensions must match content. Renaming `foo.cpp` to `foo.py` causes ctags to parse C++ with the Python parser and produce zero tags.
+- File paths containing the literal string `::::` are not supported — this sequence is reserved as the internal separator.
+- Python lambdas, nested inner functions, and heavily decorated definitions may be classified differently than expected. Top-level `def` statements and class methods always work.
