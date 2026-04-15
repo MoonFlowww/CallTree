@@ -1,4 +1,4 @@
-# calltree.sh
+# calltree.sh 🌳
 
 ASCII call tree generator for **C, C++, Python, Rust, Go, Java, JavaScript, TypeScript, Ruby, Lua, PHP, Perl, C#, Kotlin, Scala, Swift** and ~25 other languages — single file or entire project.
 Parses function definitions via [universal-ctags](https://github.com/universal-ctags/ctags) and call edges via a small Perl backend, then renders them as a tree in the terminal.
