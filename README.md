@@ -423,23 +423,78 @@ The `FILE::::FUNC` key syntax uses four colons as a separator, safe because `:::
 Each file's functions are grouped in a named `subgraph`. Cross-file edges connect nodes across subgraphs automatically. Node IDs use `SAFE_BASENAME_funcname` to stay unique even when two files define a function with the same name.
 
 ```mermaid
-graph TD
-  subgraph core_cpp["core.cpp"]
-    core_cpp_make_key["std::string make_key()"]
-    core_cpp_dispatch["void dispatch()"]
+flowchart TD
+  subgraph figure_hpp["figure.hpp"]
+    figure_hpp_Figure["void Figure()"]
+    figure_hpp_set_title["void set_title()"]
+    figure_hpp_set_xlabel["void set_xlabel()"]
+    figure_hpp_set_ylabel["void set_ylabel()"]
+    figure_hpp_grid["void grid()"]
+    figure_hpp_axis["void axis()"]
+    figure_hpp_legend["void legend()"]
+    figure_hpp_layout["void layout()"]
+    figure_hpp_text["void text()"]
+    figure_hpp_perf["void perf()"]
+    figure_hpp_plot["PlotCommand plot()"]
+    figure_hpp_plot_ref["PlotCommand plot_ref()"]
+    figure_hpp_render["void render()"]
+    figure_hpp_canvas["const rendering::Canvas & canvas()"]
+    figure_hpp_entries["const std::vector<PlotEntry> & entries()"]
+    figure_hpp_add_entry["void add_entry()"]
+    figure_hpp_compute_plot_area["void compute_plot_area()"]
+    figure_hpp_compute_data_bounds["void compute_data_bounds()"]
+    figure_hpp_setup_transform["void setup_transform()"]
+    figure_hpp_render_grid["void render_grid()"]
+    figure_hpp_render_axes["void render_axes()"]
+    figure_hpp_render_data["void render_data()"]
+    figure_hpp_render_legend["void render_legend()"]
+    figure_hpp_render_title_and_labels["void render_title_and_labels()"]
   end
-  subgraph net_cpp["net.cpp"]
-    net_cpp_send["void send()"]
-    net_cpp_flush["void flush()"]
-    net_cpp_encode["std::string encode()"]
-    net_cpp_format["int format()"]
+  subgraph text_hpp["text.hpp"]
+    text_hpp_get_glyph["const Glyph & get_glyph()"]
+    text_hpp___anon0566b84d0102["bool __anon0566b84d0102()"]
+    text_hpp___anon0566b84d0202["void __anon0566b84d0202()"]
+    text_hpp_draw_text["void draw_text()"]
+    text_hpp_draw_text_vertical["void draw_text_vertical()"]
+    text_hpp_text_width["i32 text_width()"]
+    text_hpp_text_height["i32 text_height()"]
+    text_hpp_text_width_vertical["i32 text_width_vertical()"]
+    text_hpp_text_height_vertical["i32 text_height_vertical()"]
+  end
+  subgraph tick_engine_hpp["tick_engine.hpp"]
+    tick_engine_hpp_compute["std::vector<Tick> compute()"]
+    tick_engine_hpp_compute_linear["std::vector<Tick> compute_linear()"]
+    tick_engine_hpp_compute_log["std::vector<Tick> compute_log()"]
+    tick_engine_hpp_format_value["std::string format_value()"]
+    tick_engine_hpp_format_log_value["std::string format_log_value()"]
   end
 
-  core_cpp_make_key --> net_cpp_format
-  core_cpp_dispatch --> core_cpp_make_key
-  core_cpp_dispatch --> net_cpp_send
-  net_cpp_send --> net_cpp_encode
-  net_cpp_send --> net_cpp_flush
+  figure_hpp_render --> figure_hpp_compute_plot_area
+  figure_hpp_render --> figure_hpp_compute_data_bounds
+  figure_hpp_render --> figure_hpp_setup_transform
+  figure_hpp_render --> figure_hpp_render_grid
+  figure_hpp_render --> figure_hpp_render_axes
+  figure_hpp_render --> figure_hpp_render_data
+  figure_hpp_render --> figure_hpp_render_legend
+  figure_hpp_render --> figure_hpp_render_title_and_labels
+  figure_hpp_render_grid --> tick_engine_hpp_compute
+  figure_hpp_render_axes --> tick_engine_hpp_compute
+  figure_hpp_render_axes --> text_hpp_text_width
+  figure_hpp_render_axes --> text_hpp_draw_text
+  figure_hpp_render_legend --> text_hpp_text_height
+  figure_hpp_render_legend --> text_hpp_text_width
+  figure_hpp_render_legend --> text_hpp_draw_text
+  figure_hpp_render_title_and_labels --> text_hpp_text_width
+  figure_hpp_render_title_and_labels --> text_hpp_draw_text
+  figure_hpp_render_title_and_labels --> text_hpp_text_height_vertical
+  figure_hpp_render_title_and_labels --> text_hpp_draw_text_vertical
+  text_hpp_draw_text --> text_hpp_get_glyph
+  text_hpp_draw_text_vertical --> text_hpp_get_glyph
+  tick_engine_hpp_compute --> tick_engine_hpp_compute_log
+  tick_engine_hpp_compute --> tick_engine_hpp_compute_linear
+  tick_engine_hpp_compute_linear --> tick_engine_hpp_format_value
+  tick_engine_hpp_compute_log --> tick_engine_hpp_format_log_value
+
 ```
 
 ### Multi-file DOT export
