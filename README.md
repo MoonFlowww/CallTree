@@ -81,57 +81,69 @@ cp calltree.sh ~/.local/bin/calltree
 ## Usage
 
 ```
+calltree.sh PATH [PATH ...] [OPTIONS]
+```
+
+`PATH` may be a file or a directory. Multiple paths are accepted and can be freely mixed. Directories are scanned recursively for known source extensions.
+
+```bash
 # Single file
-./calltree.sh -F <file> [OPTIONS]
+./calltree.sh src/main.cpp
 
-# Multiple explicit files
-./calltree.sh -F file1.cpp -F file2.cpp -F file3.hpp [OPTIONS]
+# Multiple files
+./calltree.sh src/main.cpp src/util.cpp lib/io.hpp
 
-# Recursive directory scan
-./calltree.sh -D <src/> [OPTIONS]
+# Whole directory
+./calltree.sh src/
 
-# Directory scan with filtering
-./calltree.sh -D <src/> -I "*.cpp" -E "test_*" [OPTIONS]
+# Mixing files and directories
+./calltree.sh src/ include/ vendor/one_file.cpp
+
+# Directory with filters
+./calltree.sh src/ -I "*.cpp" -E "test_*"
+
+# Paths that begin with a dash need the -- separator
+./calltree.sh -- -weird-file.cpp
 ```
 
 ### Options
 
 | Flag | Argument | Default | Description |
 |------|----------|---------|-------------|
-| `-F` | `FILE` | — | Input **F**ile. Repeatable — multiple `-F` flags accumulate |
-| `-D` | `DIR` | — | Recursively scan **D**irectory. Repeatable |
 | `-I` | `PATTERN` | — | **I**nclude glob, basename match. Repeatable. Applied before `-E`. When absent, all files pass |
 | `-E` | `PATTERN` | — | **E**xclude glob, basename match. Repeatable. Takes precedence over `-I` matches |
 | `-f` | `FUNC` | auto | **f**ind function: start tree from it. Accepts a bare function name (auto-picks the first file that defines it) or a fully-qualified key `filepath::::funcname` to pin a specific file |
-| `--depth` | `N` | `4` | Recursion depth in the tree |
+| `-d` | `N` | `4` | Max recursion **d**epth in the tree |
 | `-out-T` | `[FILE]` | `<base>.txt` | Write plain-**T**ext tree (no ANSI codes) |
 | `-out-M` | `[FILE]` | `<base>.mmd` | Write **M**ermaid graph. Multi-file mode wraps each file's functions in a named subgraph |
 | `-out-D` | `[FILE]` | `<base>.dot` | Write Graphviz **D**OT. Multi-file mode wraps each file's functions in a cluster |
 | `-c` | — | off | **C**olorize function names in terminal using 256-color ANSI |
 | `-s` | — | off | **S**ee — always expand repeated subtrees (disable `[seen]` compression) |
+| `-t` | — | off | No **t**erminal output; only `-out-*` files are written. Does not affect the `-out-*` flags themselves |
 | `-p` | — | off | Show **p**erformance footer: mapping/print/file timings plus line counters |
 | `-v` | — | — | Print **v**ersion and exit |
 | `-w` | — | — | Print absolute path to this script (**w**here) and exit |
-| `-h`, `--help` | — | — | Show help and exit |
+| `-h` | — | — | Print help (with full language list) and exit |
+| `--` | — | — | End of options; everything after is treated as a path |
 
-File arguments for `-out-*` flags are optional. When omitted, the output path is derived automatically:
+File arguments for `-out-*` flags are optional. When provided, the value must end with the matching extension (`.txt`, `.mmd`, `.dot`) so the parser doesn't mistake a positional input path for an output filename. When omitted, the output path is derived automatically from the input:
 
 ```bash
 # Single file
-./calltree.sh -F src/foo.cpp -out-M              # → src/foo.mmd
-./calltree.sh -F src/foo.cpp -out-M graph.mmd    # → graph.mmd
+./calltree.sh src/foo.cpp -out-M                 # → src/foo.mmd
+./calltree.sh src/foo.cpp -out-M graph.mmd       # → graph.mmd (explicit)
 
-# -D
-./calltree.sh -D src/ -out-M                     # → src/calltree.mmd
-./calltree.sh -D src/ -out-D                     # → src/calltree.dot
+# Directory
+./calltree.sh src/ -out-M                        # → src/calltree.mmd
+./calltree.sh src/ -out-D                        # → src/calltree.dot
 
-# Multiple -F files (no -D)
-./calltree.sh -F a.cpp -F b.cpp -out-D           # → ./calltree.dot
+# Multiple positional files
+./calltree.sh a.cpp b.cpp -out-D                 # → ./calltree.dot
 ```
 
 ### Supported languages
 
-Anything universal-ctags can parse is a candidate; the backend has an explicit kind allow-list for the languages below and a permissive fallback for everything else.
+Anything universal-ctags can parse is a candidate; the backend has an explicit kind allow-list for the languages below and a permissive fallback for everything else. The complete list is also printed by `calltree.sh -h`.
 
 | Language | Extensions | Return types |
 |---|---|---|
@@ -160,13 +172,13 @@ For languages without type annotations (Python, Ruby, Lua, Perl), the return typ
 ### Basic tree
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp
+./calltree.sh src/sink/rntuple.hpp
 ```
 
 ### Limit depth
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp --depth 2
+./calltree.sh src/sink/rntuple.hpp -d 2
 ```
 
 ```
@@ -181,7 +193,7 @@ ingest()  -> void
 ### Start from a specific function
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp -f rotate
+./calltree.sh src/sink/rntuple.hpp -f rotate
 ```
 
 ```
@@ -197,7 +209,7 @@ rotate()  -> void
 ### Terminal colors
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp -c
+./calltree.sh src/sink/rntuple.hpp -c
 ```
 
 Each function name is assigned a unique 256-color ANSI color.
@@ -210,10 +222,24 @@ color index = 40 + round(170 * i / (N - 1))
 
 Colors also apply in the summary table's `calls` column.
 
+### Silent mode
+
+```bash
+./calltree.sh src/sink/rntuple.hpp -t -out-T -out-M -out-D
+```
+
+`-t` suppresses the terminal tree and summary table, but `-out-*` files are still written. Useful for scripts, CI pipelines, or when only the exports are needed.
+
+```
+  -> plain text  : src/sink/rntuple.txt
+  -> Mermaid     : src/sink/rntuple.mmd
+  -> DOT         : src/sink/rntuple.dot  (render: dot -Tsvg -o graph.svg src/sink/rntuple.dot)
+```
+
 ### Performance footer
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp -p
+./calltree.sh src/sink/rntuple.hpp -p
 ```
 
 Shows backend timing, render timing, and line counters for source and terminal output:
@@ -242,6 +268,8 @@ When combined with any `-out-*` flag, a `file` row is added to both the timings 
                  206 lines (file)
 ```
 
+When combined with `-t`, the `cli` counter shows `0 lines (cli, suppressed by -t)`.
+
 | Row | Meaning |
 |---|---|
 | `mapping` | ctags parse + perl call-edge analysis + bash array load |
@@ -255,7 +283,7 @@ When combined with any `-out-*` flag, a `file` row is added to both the timings 
 ### Export to Mermaid
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp -out-M
+./calltree.sh src/sink/rntuple.hpp -out-M
 ```
 
 Writes `src/sink/rntuple.mmd`, fenced in ` ```mermaid ``` ` blocks so it renders directly when pasted into a GitHub README, GitLab wiki, or Notion page.
@@ -289,7 +317,7 @@ graph TD
 ### Export to Graphviz DOT
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp -out-D
+./calltree.sh src/sink/rntuple.hpp -out-D
 ```
 
 Render the `.dot` file to SVG or PNG:
@@ -306,7 +334,7 @@ Node labels include the return type and call frequency.
 ### Export to plain text
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp -out-T
+./calltree.sh src/sink/rntuple.hpp -out-T
 ```
 
 Identical layout to the terminal output, with no ANSI codes — safe to `grep`, `diff`, or commit.
@@ -337,19 +365,19 @@ rotate()  -> void
 ### All outputs at once
 
 ```bash
-./calltree.sh -F src/sink/rntuple.hpp -c -s -p -out-T -out-M -out-D
+./calltree.sh src/sink/rntuple.hpp -c -s -p -out-T -out-M -out-D
 ```
 
 ---
 
 ## Multi-file examples
 
-Multi-file mode is activated whenever more than one file is provided, either via multiple `-F` flags or via `-D`. All flags continue to work identically; the only visual changes are the `[basename]` annotations in the tree and an extra `file` column in the summary table.
+Multi-file mode is activated whenever more than one file is provided, either via multiple positional paths or via directory scanning. All flags continue to work identically; the only visual changes are the `[basename]` annotations in the tree and an extra `file` column in the summary table.
 
 ### Two explicit files
 
 ```bash
-./calltree.sh -F src/core.cpp -F src/net.cpp --depth 3
+./calltree.sh src/core.cpp src/net.cpp -d 3
 ```
 
 ```
@@ -378,25 +406,33 @@ Cross-file calls are shown inline in the tree. The `[basename]` tag after each f
 ### Recursive directory scan
 
 ```bash
-./calltree.sh -D src/ --depth 4
+./calltree.sh src/ -d 4
 ```
 
 Scans `src/` recursively for all supported source files (sorted, deduplicated), analyzes them as a single unit, and prints the unified call tree.
+
+### Multiple directories
+
+```bash
+./calltree.sh src/ include/ tests/ -d 3
+```
+
+Paths are merged into a single unit of analysis. Files found in any of the listed directories are combined before call resolution.
 
 ### Directory scan with filtering
 
 ```bash
 # Only implementation files, not headers
-./calltree.sh -D src/ -I "*.cpp"
+./calltree.sh src/ -I "*.cpp"
 
 # Exclude generated and test files
-./calltree.sh -D src/ -E "*.pb.cc" -E "test_*" -E "*_mock.*"
+./calltree.sh src/ -E "*.pb.cc" -E "test_*" -E "*_mock.*"
 
 # Combined — only implementation, no tests
-./calltree.sh -D src/ -I "*.cpp" -E "test_*"
+./calltree.sh src/ -I "*.cpp" -E "test_*"
 
 # Mixed-language project: only Rust and Go
-./calltree.sh -D src/ -I "*.rs" -I "*.go"
+./calltree.sh src/ -I "*.rs" -I "*.go"
 ```
 
 `-I` and `-E` both match against the **basename** of each file using standard shell glob syntax. Processing order: `-I` is applied first (if any are specified); then `-E` is applied to the surviving set. Both flags are repeatable.
@@ -405,10 +441,10 @@ Scans `src/` recursively for all supported source files (sorted, deduplicated), 
 
 ```bash
 # Bare function name — auto-picks the first file that defines it
-./calltree.sh -D src/ -f dispatch
+./calltree.sh src/ -f dispatch
 
 # Fully-qualified key — pin to a specific file when the name is ambiguous
-./calltree.sh -D src/ -f "src/core.cpp::::dispatch"
+./calltree.sh src/ -f "src/core.cpp::::dispatch"
 ```
 
 The `FILE::::FUNC` key syntax uses four colons as a separator, safe because `::::` cannot appear in typical source-code identifiers or paths.
@@ -416,7 +452,7 @@ The `FILE::::FUNC` key syntax uses four colons as a separator, safe because `:::
 ### Multi-file Mermaid export
 
 ```bash
-./calltree.sh -D src/ -out-M
+./calltree.sh src/ -out-M
 # → src/calltree.mmd
 ```
 
@@ -427,86 +463,49 @@ flowchart TD
   subgraph figure_hpp["figure.hpp"]
     figure_hpp_Figure["void Figure()"]
     figure_hpp_set_title["void set_title()"]
-    figure_hpp_set_xlabel["void set_xlabel()"]
-    figure_hpp_set_ylabel["void set_ylabel()"]
-    figure_hpp_grid["void grid()"]
-    figure_hpp_axis["void axis()"]
-    figure_hpp_legend["void legend()"]
-    figure_hpp_layout["void layout()"]
-    figure_hpp_text["void text()"]
-    figure_hpp_perf["void perf()"]
-    figure_hpp_plot["PlotCommand plot()"]
-    figure_hpp_plot_ref["PlotCommand plot_ref()"]
     figure_hpp_render["void render()"]
-    figure_hpp_canvas["const rendering::Canvas & canvas()"]
-    figure_hpp_entries["const std::vector<PlotEntry> & entries()"]
-    figure_hpp_add_entry["void add_entry()"]
     figure_hpp_compute_plot_area["void compute_plot_area()"]
-    figure_hpp_compute_data_bounds["void compute_data_bounds()"]
-    figure_hpp_setup_transform["void setup_transform()"]
     figure_hpp_render_grid["void render_grid()"]
     figure_hpp_render_axes["void render_axes()"]
     figure_hpp_render_data["void render_data()"]
-    figure_hpp_render_legend["void render_legend()"]
-    figure_hpp_render_title_and_labels["void render_title_and_labels()"]
   end
   subgraph text_hpp["text.hpp"]
     text_hpp_get_glyph["const Glyph & get_glyph()"]
-    text_hpp___anon0566b84d0102["bool __anon0566b84d0102()"]
-    text_hpp___anon0566b84d0202["void __anon0566b84d0202()"]
     text_hpp_draw_text["void draw_text()"]
-    text_hpp_draw_text_vertical["void draw_text_vertical()"]
     text_hpp_text_width["i32 text_width()"]
-    text_hpp_text_height["i32 text_height()"]
-    text_hpp_text_width_vertical["i32 text_width_vertical()"]
-    text_hpp_text_height_vertical["i32 text_height_vertical()"]
   end
   subgraph tick_engine_hpp["tick_engine.hpp"]
     tick_engine_hpp_compute["std::vector<Tick> compute()"]
-    tick_engine_hpp_compute_linear["std::vector<Tick> compute_linear()"]
-    tick_engine_hpp_compute_log["std::vector<Tick> compute_log()"]
-    tick_engine_hpp_format_value["std::string format_value()"]
-    tick_engine_hpp_format_log_value["std::string format_log_value()"]
   end
 
   figure_hpp_render --> figure_hpp_compute_plot_area
-  figure_hpp_render --> figure_hpp_compute_data_bounds
-  figure_hpp_render --> figure_hpp_setup_transform
   figure_hpp_render --> figure_hpp_render_grid
   figure_hpp_render --> figure_hpp_render_axes
   figure_hpp_render --> figure_hpp_render_data
-  figure_hpp_render --> figure_hpp_render_legend
-  figure_hpp_render --> figure_hpp_render_title_and_labels
   figure_hpp_render_grid --> tick_engine_hpp_compute
-  figure_hpp_render_axes --> tick_engine_hpp_compute
   figure_hpp_render_axes --> text_hpp_text_width
   figure_hpp_render_axes --> text_hpp_draw_text
-  figure_hpp_render_legend --> text_hpp_text_height
-  figure_hpp_render_legend --> text_hpp_text_width
-  figure_hpp_render_legend --> text_hpp_draw_text
-  figure_hpp_render_title_and_labels --> text_hpp_text_width
-  figure_hpp_render_title_and_labels --> text_hpp_draw_text
-  figure_hpp_render_title_and_labels --> text_hpp_text_height_vertical
-  figure_hpp_render_title_and_labels --> text_hpp_draw_text_vertical
   text_hpp_draw_text --> text_hpp_get_glyph
-  text_hpp_draw_text_vertical --> text_hpp_get_glyph
-  tick_engine_hpp_compute --> tick_engine_hpp_compute_log
-  tick_engine_hpp_compute --> tick_engine_hpp_compute_linear
-  tick_engine_hpp_compute_linear --> tick_engine_hpp_format_value
-  tick_engine_hpp_compute_log --> tick_engine_hpp_format_log_value
-
 ```
 
 ### Multi-file DOT export
 
 ```bash
-./calltree.sh -D src/ -out-D
+./calltree.sh src/ -out-D
 dot -Tsvg -o graph.svg src/calltree.dot
 ```
 
 Each file becomes a `subgraph cluster_N` with its own label and a light grey background. Cross-cluster edges are drawn between the full-path node IDs.
 
 ![Multi-file DOT diagram](misc/dot_multi.svg)
+
+### Silent pipeline mode
+
+```bash
+./calltree.sh src/ -t -out-T -out-M -out-D -p
+```
+
+Useful in CI scripts: the `-t` flag suppresses the terminal tree, the three `-out-*` flags produce artifacts on disk, and `-p` still prints the performance footer so timings can be captured in logs.
 
 ---
 
@@ -556,7 +555,7 @@ The table is always printed below the tree. In multi-file mode it gains a `file`
 ```
 
 1. **ctags** parses every input file and emits one JSON line per tag (function/method/sub) with fields: `name`, `path`, `language`, `line`, `end`, `kind`, `typeref`, `signature`.
-2. **perl** consumes the stream, filters by a per-language kind allow-list, builds a global `funcname → [files]` registry, re-opens each source file, extracts the body range `line..end` for each function, and scans it for callees matching known names (excluding method calls via a `(?<![>.])` lookbehind).
+2. **perl** consumes the stream, filters by a per-language kind allow-list, drops anonymous ctags-generated names (lambdas, anonymous structs/unions), builds a global `funcname → [files]` registry, re-opens each source file, extracts the body range `line..end` for each function, and scans it for callees matching known names (excluding method calls via a `(?<![>.])` lookbehind).
 3. **bash** loads the emitted `CALLS`/`TYPES`/`FREQ` tables into associative arrays and renders the tree, summary table, and optional `-out-*` exports.
 
 ### Single-file vs multi-file
@@ -583,6 +582,8 @@ ctags classifies each tag with a language-specific `kind`. The backend has an ex
 
 For any other language, the default fallback accepts `function`, `method`, `func`, `fn`, `subroutine`.
 
+Anonymous ctags-generated names (such as `__anon0566b84d0102` for lambdas or anonymous structs) are filtered out automatically.
+
 ### Return type extraction
 
 Three strategies, tried in order:
@@ -604,7 +605,7 @@ The Perl pass runs once on all input files. Pass 1 builds a global `funcname →
 
 This matches compiler lookup semantics for non-overloaded free functions and ensures that same-file helper calls are never misattributed to a homonymous function in another file.
 
-### File collection (`-D`)
+### Directory scanning
 
 `find` is invoked with `-print0` and the result piped through `sort -z`, so filenames with spaces and special characters are handled correctly. The scanner recognises these extensions out of the box:
 
