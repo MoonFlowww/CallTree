@@ -1,44 +1,37 @@
 #!/usr/bin/env bash
-# calltree.sh | ASCII / Mermaid / DOT call graph multi-language static analysis.
+# calltree.sh | ASCII / Mermaid / DOT call graph - multi-language static analysis.
 #
 # Supports C, C++, Python, Rust, Go, Java, JavaScript, TypeScript, Ruby, Lua,
 # PHP, Perl, C#, Kotlin, Scala, Swift, Haskell, OCaml, and ~25 other languages
 # via universal-ctags. File dispatch is automatic by extension.
 #
-# Single-file usage:
-#   ./calltree.sh -F <file> [OPTIONS]
+# Usage:
+#   ./calltree.sh PATH [PATH ...] [OPTIONS]
 #
-# Multi-file / project-wide usage:
-#   ./calltree.sh -F file1.cpp -F file2.py [OPTIONS]
-#   ./calltree.sh -D src/ [OPTIONS]
-#   ./calltree.sh -D src/ -I "*.cpp" -E "test_*" [OPTIONS]
+# PATH can be a file or a directory. Multiple paths are accepted. Directories
+# are scanned recursively for known source extensions. Use -- to mark the end
+# of options when a path begins with a dash.
 #
 # Options:
-#   -F FILE             input file (repeatable)
-#   -D DIR              recursively scan DIR for source files (repeatable)
-#                       recognised extensions:
-#                         .c .h .cpp .hpp .cc .cxx .hxx
-#                         .cs .py .rs .go .java
-#                         .js .jsx .ts .tsx
-#                         .rb .lua .php .pl .pm
-#                         .scala .kt .swift .hs .ml .fs
 #   -I PATTERN          include glob, basename match (repeatable, applied first)
 #   -E PATTERN          exclude glob, basename match (repeatable, applied last)
 #   -f FUNC             find function: start tree from FUNC
 #                       accepts a bare name (auto-picks first file that defines
 #                       it) or a full key FILE::::FUNC to pin a specific file
-#   --depth N           max recursion depth (default: 4)
+#   -d N                max recursion depth (default: 4)
 #   -out-T [FILE]       write plain-text tree (default: <base>.txt)
 #   -out-M [FILE]       write Mermaid graph  (default: <base>.mmd)
 #                       multi-file uses one subgraph per file
 #   -out-D [FILE]       write Graphviz DOT   (default: <base>.dot)
 #                       multi-file uses one cluster per file
-#   -c                  colorize function names in terminal (256-color ANSI)
+#   -c                  colorize terminal output (256-color ANSI)
 #   -s                  see-all: expand repeated subtrees (disable [seen])
+#   -t                  no terminal output; only -out-* files are written
 #   -p                  show performance footer (timings + line counters)
 #   -v                  print version and exit
 #   -w                  print absolute path to this script and exit
-#   -h, --help          print help and exit
+#   -h                  print help (with full language list) and exit
+#   --                  end of options; everything after is treated as paths
 #
 # Pipeline:
 #   universal-ctags  --(JSON tags)-->  perl backend  --(tables)-->  bash render
@@ -87,7 +80,7 @@
 #   graphviz        (optional, only for rendering .dot to svg/png)
 set -euo pipefail
 
-readonly _VERSION="2.0.0"
+readonly _VERSION="2.1.0"
 readonly _SEP="::::"
 readonly _AUTO="__AUTO__"
 
@@ -121,93 +114,143 @@ _ROOT_FUNC=""
 _USE_COLOR=0
 _SEE_ALL=0
 _SHOW_PERF=0
+_NO_CLI=0
 _OUT_MMD=""
 _OUT_DOT=""
 _OUT_TXT=""
-declare -a _INPUT_FILES=() _SCAN_DIRS=() _INC_PATS=() _EXC_PATS=()
+declare -a _INPUT_FILES=() _SCAN_DIRS=() _INC_PATS=() _EXC_PATS=() _POSITIONAL=()
 
 _usage() {
   cat <<EOF
 calltree.sh v${_VERSION} - multi-language call tree (ctags + perl)
 
-INPUT
-  -F FILE         input file (repeatable)
-  -D DIR          recursively scan directory (repeatable)
+USAGE
+  calltree.sh PATH [PATH ...] [OPTIONS]
+
+  PATH may be a file or a directory. Multiple paths are accepted. Directories
+  are scanned recursively for known source extensions.
+
+OPTIONS
   -I PATTERN      include glob, basename match (repeatable, applied first)
   -E PATTERN      exclude glob, basename match (repeatable, applied last)
 
-SELECTION
   -f FUNC         start tree from FUNC (bare name or 'file::::func' key)
-  --depth N       max recursion depth (default: 4)
+  -d N            max recursion depth (default: 4)
 
-OUTPUT
   -out-T [FILE]   write plain text  (default: <base>.txt)
   -out-M [FILE]   write Mermaid     (default: <base>.mmd)
   -out-D [FILE]   write Graphviz    (default: <base>.dot)
 
-DISPLAY
   -c              colorize terminal output (256-color ANSI)
   -s              expand repeated subtrees ([seen] compression off)
-  -p              show performance footer (timings + line counts)
+  -t              no terminal output; only -out-* files are written
+  -p              show performance footer (timings + line counters)
 
-META
   -v              print version and exit
   -w              print absolute path to this script and exit
-  -h, --help      this help
+  -h              print this help (with full language list) and exit
+  --              end of options; everything after is treated as paths
 
-LANGUAGES
-  Anything universal-ctags supports: C/C++, Python, Rust, Go, Java, JS/TS,
-  C#, Ruby, Lua, PHP, Perl, Scala, Kotlin, Swift, Haskell, OCaml, ...
-  Files are dispatched automatically by extension.
+SUPPORTED LANGUAGES
+  Files are dispatched automatically by extension. The backend has an
+  explicit kind allow-list for the languages below, plus a permissive
+  fallback (function/method/func/fn/subroutine) for everything else.
+
+  Language        Extensions                          Return types
+  --------------  ----------------------------------  -------------
+  C / C++         .c .h .cpp .hpp .cc .cxx .hxx       yes
+  C#              .cs                                 yes
+  Python          .py                                 - (no annot.)
+  Go              .go                                 yes
+  Rust            .rs                                 yes (from sig)
+  Java            .java                               yes
+  JavaScript      .js .jsx                            partial
+  TypeScript      .ts .tsx                            yes
+  Ruby            .rb                                 -
+  Lua             .lua                                -
+  PHP             .php                                yes
+  Perl            .pl .pm                             -
+  Kotlin          .kt                                 yes
+  Scala           .scala                              yes
+  Swift           .swift                              yes
+  Haskell         .hs                                 best effort
+  OCaml           .ml                                 best effort
+  F#              .fs                                 best effort
 
 DEPS
-  bash >=4, perl (core JSON::PP), universal-ctags with +json support.
+  bash >= 4
+  perl (core JSON::PP since 5.14)
+  universal-ctags with +json support
+  graphviz (optional, only for rendering .dot to svg/png)
 
 EXAMPLES
-  calltree.sh -F src/main.cpp -c
-  calltree.sh -D src/ -I '*.cpp' -E 'test_*' --depth 5 -p
-  calltree.sh -D src/ -f dispatch -out-M -out-D -c
-  calltree.sh -F a.py -F b.py -out-T graph.txt
+  calltree.sh src/main.cpp -c
+  calltree.sh src/                                  # scan a directory
+  calltree.sh src/ include/ -d 5 -p                 # multi-dir + depth + perf
+  calltree.sh src/ -I '*.cpp' -E 'test_*' -out-D    # filtered DOT export
+  calltree.sh src/ -f dispatch -out-M -out-D -c     # rooted Mermaid + DOT
+  calltree.sh a.py b.py c.py -out-T graph.txt       # multi-file text export
+  calltree.sh src/ -t -out-T -out-M -out-D          # silent run, files only
+  calltree.sh -- -weird-file.cpp                    # path starting with dash
 EOF
 }
 
 # =============================================================================
 # Argument parser
 # =============================================================================
-_is_val() { [[ ${1+x} == x ]] && [[ -n "${1-}" ]] && [[ "${1-}" != -* ]]; }
+# A trailing optional FILE for -out-* is detected only if it ends with the
+# matching extension (.txt / .mmd / .dot). This avoids grabbing the next
+# positional path when the user wants the auto-derived filename.
+_peek_ext() {  # _peek_ext <next_token> <expected_ext>
+  [[ ${1+x} == x ]] || return 1
+  [[ -n "${1-}" ]]   || return 1
+  [[ "${1-}" != -* ]] || return 1
+  case "$1" in
+    *."$2") return 0 ;;
+    *)      return 1 ;;
+  esac
+}
 
-_need_arg() {
-  # _need_arg <flag> <count_remaining>
+_need_arg() {  # _need_arg <flag> <count_remaining>
   [[ $2 -ge 2 ]] || { printf 'ERROR: %s needs a value\n' "$1" >&2; exit 1; }
 }
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    -F)  _need_arg "$1" "$#"; _INPUT_FILES+=("$2"); shift 2 ;;
-    -D)  _need_arg "$1" "$#"; _SCAN_DIRS+=("$2");   shift 2 ;;
-    -I)  _need_arg "$1" "$#"; _INC_PATS+=("$2");    shift 2 ;;
-    -E)  _need_arg "$1" "$#"; _EXC_PATS+=("$2");    shift 2 ;;
-    -f)  _need_arg "$1" "$#"; _ROOT_FUNC="$2";      shift 2 ;;
-    --depth) _need_arg "$1" "$#"; _MAX_DEPTH="$2";  shift 2 ;;
+    -I)  _need_arg "$1" "$#"; _INC_PATS+=("$2"); shift 2 ;;
+    -E)  _need_arg "$1" "$#"; _EXC_PATS+=("$2"); shift 2 ;;
+    -f)  _need_arg "$1" "$#"; _ROOT_FUNC="$2";   shift 2 ;;
+    -d)  _need_arg "$1" "$#"; _MAX_DEPTH="$2";   shift 2 ;;
 
-    -out-T) shift; if _is_val "${1-}"; then _OUT_TXT=$1; shift; else _OUT_TXT=$_AUTO; fi ;;
-    -out-M) shift; if _is_val "${1-}"; then _OUT_MMD=$1; shift; else _OUT_MMD=$_AUTO; fi ;;
-    -out-D) shift; if _is_val "${1-}"; then _OUT_DOT=$1; shift; else _OUT_DOT=$_AUTO; fi ;;
+    -out-T) shift; if _peek_ext "${1-}" txt; then _OUT_TXT=$1; shift; else _OUT_TXT=$_AUTO; fi ;;
+    -out-M) shift; if _peek_ext "${1-}" mmd; then _OUT_MMD=$1; shift; else _OUT_MMD=$_AUTO; fi ;;
+    -out-D) shift; if _peek_ext "${1-}" dot; then _OUT_DOT=$1; shift; else _OUT_DOT=$_AUTO; fi ;;
 
     -c)  _USE_COLOR=1; shift ;;
     -s)  _SEE_ALL=1;   shift ;;
+    -t)  _NO_CLI=1;    shift ;;
     -p)  _SHOW_PERF=1; shift ;;
 
     -v)  printf 'calltree.sh %s\n' "$_VERSION"; exit 0 ;;
     -w)  _realpath "$0"; exit 0 ;;
-    -h|--help) _usage; exit 0 ;;
+    -h)  _usage; exit 0 ;;
 
-    --)  shift; while [[ $# -gt 0 ]]; do _INPUT_FILES+=("$1"); shift; done ;;
-    -*)  printf 'Unknown option: %s\n' "$1" >&2
+    --)  shift; while [[ $# -gt 0 ]]; do _POSITIONAL+=("$1"); shift; done ;;
+    -*)  printf 'ERROR: unknown option: %s\n' "$1" >&2
          printf 'Try: %s -h\n' "$0" >&2
          exit 1 ;;
-    *)   _INPUT_FILES+=("$1"); shift ;;
+    *)   _POSITIONAL+=("$1"); shift ;;
   esac
+done
+
+# Classify positional args into files and directories
+for _ARG in "${_POSITIONAL[@]+"${_POSITIONAL[@]}"}"; do
+  if   [[ -d "$_ARG" ]]; then _SCAN_DIRS+=("$_ARG")
+  elif [[ -f "$_ARG" ]]; then _INPUT_FILES+=("$_ARG")
+  else
+    printf 'ERROR: not a file or directory: %s\n' "$_ARG" >&2
+    exit 1
+  fi
 done
 
 # =============================================================================
@@ -238,10 +281,9 @@ EOF
 _check_ctags
 
 # =============================================================================
-# Collect files from -D scans (apply -I/-E filters)
+# Collect files from directory scans (apply -I/-E filters)
 # =============================================================================
 for _DIR in "${_SCAN_DIRS[@]+"${_SCAN_DIRS[@]}"}"; do
-  [[ -d "$_DIR" ]] || { printf 'ERROR: not a directory: %s\n' "$_DIR" >&2; exit 1; }
   while IFS= read -r -d '' _F; do
     _BN="${_F##*/}"
     _OK=1
@@ -375,16 +417,20 @@ for my $t (@raw_tags) {
     my $lang = $t->{language} // '';
     next unless defined $name && defined $file && $name ne '' && $file ne '';
 
+    # ctags fabricates names like __anon0566b84d0102 for unnamed entities
+    # (lambdas, anonymous structs/unions). Drop them.
+    next if $name =~ /^__anon\w*$/;
+
     my $allow = $ok_kinds_per_lang{$lang} // \%default_ok;
     next unless $allow->{$kind};
 
     my $key = "${file}${SEP}${name}";
-    next if $seen_def{$key}++;   # first definition wins (matches v1 semantics)
+    next if $seen_def{$key}++;   # first definition wins
 
     my $start = $t->{line} // 0;
     my $end   = $t->{end}  // 0;
 
-    # typeref looks like "typename:int"  strip the prefix
+    # typeref looks like "typename:int"; strip the prefix
     my $tref = $t->{typeref} // '';
     $tref =~ s/^typename:\s*//;
     $tref =~ s/^\s+|\s+$//g;
@@ -449,7 +495,7 @@ for my $file (sort keys %file_defs) {
 
         my $body = join('', @lines[$s-1 .. $e-1]);
 
-        # strip comments & strings best effort, not language-perfect
+        # strip comments and strings - best effort, not language-perfect
         $body =~ s{//[^\n]*}{}g;
         $body =~ s{/\*.*?\*/}{}gs;
         if ($lang eq 'Python' || $lang eq 'Ruby' || $lang eq 'Perl' || $lang eq 'Sh') {
@@ -462,7 +508,7 @@ for my $file (sort keys %file_defs) {
         my $caller_name = $d->{name};
 
         # Skip identifiers preceded by '.' or '>' (i.e. obj.foo() / ptr->foo()).
-        # This works uniformly for C/C++/Rust/Go/Java/Py/JS  '::' qualified
+        # This works uniformly for C/C++/Rust/Go/Java/Py/JS - '::' qualified
         # calls (e.g. Foo::bar()) are still counted.
         while ($body =~ /(?<![>.])\b([A-Za-z_]\w*)\s*\(/g) {
             my $callee = $1;
@@ -483,7 +529,7 @@ for my $file (sort keys %file_defs) {
     }
 }
 
-# ---- Emit (same wire format as v1) -----------------------------------------
+# ---- Emit -----------------------------------------------------------------
 print "CALLS\n";
 for my $file (sort keys %file_defs) {
     my @sorted = sort { $a->{line} <=> $b->{line} } @{$file_defs{$file}};
@@ -923,7 +969,11 @@ _print_timing() {
 
   printf '\n'
   printf '  %-8s  %*s lines (src)\n' "read"  "$_W" "$_LINES_READ"
-  printf '  %-8s  %*s lines (cli)\n' "write" "$_W" "$_LINES_CLI"
+  if [[ $_NO_CLI -eq 0 ]]; then
+    printf '  %-8s  %*s lines (cli)\n' "write" "$_W" "$_LINES_CLI"
+  else
+    printf '  %-8s  %*s lines (cli, suppressed by -t)\n' "write" "$_W" 0
+  fi
   if [[ -n "$_OUT_TXT$_OUT_MMD$_OUT_DOT" ]]; then
     printf '            %*s lines (file)\n' "$_W" "$_LINES_FILE"
   fi
@@ -931,15 +981,19 @@ _print_timing() {
 }
 
 # =============================================================================
-# Terminal output
+# Terminal output (skipped if -t)
 # =============================================================================
 _T_PRINT_START=$(_ts_ms)
-_TMP_CLI=$(mktemp)
-_print_ascii "$_USE_COLOR" > "$_TMP_CLI"
-_LINES_CLI=$(wc -l < "$_TMP_CLI")
-_T_PRINT_END=$(_ts_ms)
-cat "$_TMP_CLI"
-rm -f "$_TMP_CLI"
+if [[ $_NO_CLI -eq 0 ]]; then
+  _TMP_CLI=$(mktemp)
+  _print_ascii "$_USE_COLOR" > "$_TMP_CLI"
+  _LINES_CLI=$(wc -l < "$_TMP_CLI")
+  _T_PRINT_END=$(_ts_ms)
+  cat "$_TMP_CLI"
+  rm -f "$_TMP_CLI"
+else
+  _T_PRINT_END=$(_ts_ms)
+fi
 
 # =============================================================================
 # File outputs
@@ -964,4 +1018,3 @@ fi
 
 _T_END=$(_ts_ms)
 _print_timing
-
