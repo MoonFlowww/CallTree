@@ -24,6 +24,8 @@
 #                       multi-file uses one subgraph per file
 #   -out-D [FILE]       write Graphviz DOT   (default: <base>.dot)
 #                       multi-file uses one cluster per file
+#   -bg-w           use light/white theme for Mermaid and DOT output
+#   -bg-d           use dark theme for Mermaid and DOT output
 #   -c                  colorize terminal output (256-color ANSI)
 #   -s                  see-all: expand repeated subtrees (disable [seen])
 #   -t                  no terminal output; only -out-* files are written
@@ -42,8 +44,8 @@
 #      funcname -> [files] registry, re-opens each source to extract each
 #      function body by its line range, and scans for known callees. Method
 #      calls (obj.foo / ptr->foo / self.foo) are excluded via a lookbehind.
-#   3. bash loads the resulting CALLS / TYPES / FREQ tables into associative
-#      arrays and renders the tree, summary table, and export files.
+#   3. bash loads the resulting CALLS / TYPES / FREQ / LINES tables into
+#      associative arrays and renders the tree, summary table, and export files.
 #
 # Return type extraction:
 #   1. ctags "typeref" field  (C, C++, Go, Java, TypeScript, Kotlin, PHP, ...)
@@ -80,7 +82,7 @@
 #   graphviz        (optional, only for rendering .dot to svg/png)
 set -euo pipefail
 
-readonly _VERSION="2.1.0"
+readonly _VERSION="2.2.0"
 readonly _SEP="::::"
 readonly _AUTO="__AUTO__"
 
@@ -92,6 +94,11 @@ _kfunc() { printf '%s' "${1##*${_SEP}}"; }
 _kbase() { local _f; _f=$(_kfile "$1"); printf '%s' "${_f##*/}"; }
 
 _ts_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'; }
+
+# Sanitize a string for use as a Mermaid node ID.
+# Replaces any character that is not alphanumeric with an underscore.
+# This handles C++ destructors (~Foo), operators, and other special names.
+_mmd_id() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
 
 _realpath() {
   if command -v realpath >/dev/null 2>&1; then
@@ -118,6 +125,7 @@ _NO_CLI=0
 _OUT_MMD=""
 _OUT_DOT=""
 _OUT_TXT=""
+_OUT_THEME=""    # "" | "light" | "dark"
 declare -a _INPUT_FILES=() _SCAN_DIRS=() _INC_PATS=() _EXC_PATS=() _POSITIONAL=()
 
 _usage() {
@@ -140,6 +148,9 @@ OPTIONS
   -out-T [FILE]   write plain text  (default: <base>.txt)
   -out-M [FILE]   write Mermaid     (default: <base>.mmd)
   -out-D [FILE]   write Graphviz    (default: <base>.dot)
+
+  -bg-w       light/white theme for Mermaid and DOT output
+  -bg-d       dark theme for Mermaid and DOT output
 
   -c              colorize terminal output (256-color ANSI)
   -s              expand repeated subtrees ([seen] compression off)
@@ -191,6 +202,8 @@ EXAMPLES
   calltree.sh src/ -f dispatch -out-M -out-D -c     # rooted Mermaid + DOT
   calltree.sh a.py b.py c.py -out-T graph.txt       # multi-file text export
   calltree.sh src/ -t -out-T -out-M -out-D          # silent run, files only
+  calltree.sh src/ -out-M -bg-d                 # Mermaid with dark theme
+  calltree.sh src/ -out-D -bg-w                 # DOT with light theme
   calltree.sh -- -weird-file.cpp                    # path starting with dash
 EOF
 }
@@ -225,6 +238,9 @@ while [[ $# -gt 0 ]]; do
     -out-T) shift; if _peek_ext "${1-}" txt; then _OUT_TXT=$1; shift; else _OUT_TXT=$_AUTO; fi ;;
     -out-M) shift; if _peek_ext "${1-}" mmd; then _OUT_MMD=$1; shift; else _OUT_MMD=$_AUTO; fi ;;
     -out-D) shift; if _peek_ext "${1-}" dot; then _OUT_DOT=$1; shift; else _OUT_DOT=$_AUTO; fi ;;
+
+    -bg-w) _OUT_THEME=light; shift ;;
+    -bg-d) _OUT_THEME=dark;  shift ;;
 
     -c)  _USE_COLOR=1; shift ;;
     -s)  _SEE_ALL=1;   shift ;;
@@ -462,7 +478,7 @@ for my $t (@raw_tags) {
 my %all_known = map { $_ => 1 } keys %func_to_files;
 
 # ---- Pass C: read sources, fix end lines, scan bodies ----------------------
-my (%calls, %freq);
+my (%calls, %freq, %linerange);
 my $total_lines = 0;
 
 for my $file (sort keys %file_defs) {
@@ -492,6 +508,8 @@ for my $file (sort keys %file_defs) {
     for my $d (@sorted) {
         my ($s, $e) = ($d->{line}, $d->{end});
         next if $s <= 0 || $s > $nlines;
+
+        $linerange{$d->{key}} = "${s}-${e}";
 
         my $body = join('', @lines[$s-1 .. $e-1]);
 
@@ -557,6 +575,15 @@ for my $file (sort keys %file_defs) {
 }
 print "---\n";
 
+print "LINES\n";
+for my $file (sort keys %file_defs) {
+    my @sorted = sort { $a->{line} <=> $b->{line} } @{$file_defs{$file}};
+    for my $d (@sorted) {
+        printf "%s\t%s\n", $d->{key}, $linerange{$d->{key}} // '0-0';
+    }
+}
+print "---\n";
+
 print "LINESREAD\n";
 print "$total_lines\n";
 print "---\n";
@@ -568,14 +595,14 @@ PERL
 # =============================================================================
 # Load perl output into bash assoc arrays
 # =============================================================================
-declare -A CALLS=() RTYPE=() FREQ=()
+declare -A CALLS=() RTYPE=() FREQ=() LINE_RANGE=()
 declare -a ALL_FUNCS=()
 _SEC=""
 _LINES_READ=0
 
 while IFS= read -r _line; do
   case "$_line" in
-    CALLS|TYPES|FREQ|LINESREAD) _SEC="$_line"; continue ;;
+    CALLS|TYPES|FREQ|LINES|LINESREAD) _SEC="$_line"; continue ;;
     ---) _SEC=""; continue ;;
     "") continue ;;
   esac
@@ -592,6 +619,10 @@ while IFS= read -r _line; do
     FREQ)
       IFS=$'\t' read -r _KEY _V <<< "$_line"
       FREQ[$_KEY]="${_V:-0}"
+      ;;
+    LINES)
+      IFS=$'\t' read -r _KEY _V <<< "$_line"
+      LINE_RANGE[$_KEY]="${_V:-0-0}"
       ;;
     LINESREAD)
       _LINES_READ="$_line"
@@ -726,15 +757,20 @@ declare -A _SEEN_SUB=()
 
 _emit() {
   local _key=$1 _pre=$2 _cont=$3 _depth=$4 _vis=$5 _col=${6:-0}
-  local _fn _children _marker _ann
+  local _fn _children _marker _ann _lr
 
   _fn=$(_kfunc "$_key")
   _children="${CALLS[$_key]:-}"
   _marker=""; _ann=""
 
+  # Line range annotation (always shown when available)
+  _lr="${LINE_RANGE[$_key]:-}"
+
   if [[ $_MULTI -eq 1 ]]; then
     local _bn; _bn=$(_kbase "$_key")
-    _ann="  [${_bn}]"
+    _ann="  [${_bn}${_lr:+:L${_lr}}]"
+  elif [[ -n "$_lr" ]]; then
+    _ann="  [L${_lr}]"
   fi
 
   if [[ ":${_vis}:" == *":${_key}:"* ]]; then
@@ -783,41 +819,46 @@ _print_table() {
 
   printf '\n'
   if [[ $_MULTI -eq 1 ]]; then
-    printf '  %-28s  %-22s  %6s  %-40s  %s\n' \
-      "function" "file" "called" "calls" "return type"
-    printf '  %s  %s  %s  %s  %s\n' \
+    printf '  %-28s  %-22s  %6s  %-40s  %-22s  %s\n' \
+      "function" "file" "called" "calls" "return type" "lines"
+    printf '  %s  %s  %s  %s  %s  %s\n' \
       "────────────────────────────" "──────────────────────" \
-      "──────" "────────────────────────────────────────" "──────────────────────"
+      "──────" "────────────────────────────────────────" \
+      "──────────────────────" "───────────"
   else
-    printf '  %-28s  %6s  %-40s  %s\n' \
-      "function" "called" "calls" "return type"
-    printf '  %s  %s  %s  %s\n' \
+    printf '  %-28s  %6s  %-40s  %-22s  %s\n' \
+      "function" "called" "calls" "return type" "lines"
+    printf '  %s  %s  %s  %s  %s\n' \
       "────────────────────────────" "──────" \
-      "────────────────────────────────────────" "──────────────────────"
+      "────────────────────────────────────────" \
+      "──────────────────────" "───────────"
   fi
 
-  local _k _fn _bn _raw _pf _pd _pb
+  local _k _fn _bn _raw _pf _pd _pb _lr _lrdisp
   for _k in "${VISIBLE_FUNCS[@]}"; do
     _fn=$(_kfunc "$_k")
     _raw=$(_uniq_calls_names "$_k"); [[ -z "$_raw" ]] && _raw="----"
+    _lr="${LINE_RANGE[$_k]:-}"; _lrdisp="${_lr:-—}"
     _pf=$(( 28 - ${#_fn} ));   (( _pf < 0 )) && _pf=0
     _pd=$(( 40 - ${#_raw} ));  (( _pd < 0 )) && _pd=0
 
     if [[ $_MULTI -eq 1 ]]; then
       _bn=$(_kbase "$_k")
       _pb=$(( 22 - ${#_bn} )); (( _pb < 0 )) && _pb=0
-      printf '  %s%*s  %s%*s  %6s  %s%*s  %s\n' \
+      printf '  %s%*s  %s%*s  %6s  %s%*s  %-22s  %s\n' \
         "$(_color "$_fn" "$_col")" "$_pf" "" \
         "$(_grey "$_bn"  "$_col")" "$_pb" "" \
         "${FREQ[$_k]:-0}" \
         "$(_calls_field "$_k")" "$_pd" "" \
-        "${RTYPE[$_k]:-?}"
+        "${RTYPE[$_k]:-?}" \
+        "$_lrdisp"
     else
-      printf '  %s%*s  %6s  %s%*s  %s\n' \
+      printf '  %s%*s  %6s  %s%*s  %-22s  %s\n' \
         "$(_color "$_fn" "$_col")" "$_pf" "" \
         "${FREQ[$_k]:-0}" \
         "$(_calls_field "$_k")" "$_pd" "" \
-        "${RTYPE[$_k]:-?}"
+        "${RTYPE[$_k]:-?}" \
+        "$_lrdisp"
     fi
   done
   printf '\n'
@@ -843,10 +884,16 @@ _print_ascii() {
 # =============================================================================
 _write_mermaid() {
   local _out_file=$1
-  local _k _ck _f _bn _sid _fn _kf _kb _ks _kn _cf _cb _cs _cn _eid
+  local _k _ck _f _bn _sid _fn _fid _kf _kb _ks _kn _kni _cf _cb _cs _cn _cni _eid
   declare -A _fmap=() _eseen=()
 
   {
+    # Theme init directive must appear before the graph declaration
+    case "$_OUT_THEME" in
+      dark)  printf '%%%%{init: {"theme": "dark"}}%%%%\n' ;;
+      light) printf '%%%%{init: {"theme": "default"}}%%%%\n' ;;
+    esac
+
     printf 'flowchart TD\n'
     if [[ $_MULTI -eq 1 ]]; then
       for _k in "${ALL_FUNCS[@]}"; do
@@ -857,14 +904,16 @@ _write_mermaid() {
         printf '  subgraph %s["%s"]\n' "$_sid" "$_bn"
         for _k in ${_fmap[$_f]}; do
           _fn=$(_kfunc "$_k")
-          printf '    %s_%s["%s %s()"]\n' "$_sid" "$_fn" "${RTYPE[$_k]:-void}" "$_fn"
+          _fid=$(_mmd_id "$_fn")
+          printf '    %s_%s["%s %s()"]\n' "$_sid" "$_fid" "${RTYPE[$_k]:-void}" "$_fn"
         done
         printf '  end\n'
       done
     else
       for _k in "${ALL_FUNCS[@]}"; do
         _fn=$(_kfunc "$_k")
-        printf '  %s["%s %s()"]\n' "$_fn" "${RTYPE[$_k]:-void}" "$_fn"
+        _fid=$(_mmd_id "$_fn")
+        printf '  %s["%s %s()"]\n' "$_fid" "${RTYPE[$_k]:-void}" "$_fn"
       done
     fi
 
@@ -875,11 +924,13 @@ _write_mermaid() {
         [[ -n "${_eseen[$_eid]:-}" ]] && continue
         _eseen[$_eid]=1
         if [[ $_MULTI -eq 1 ]]; then
-          _kf=$(_kfile "$_k");  _kb="${_kf##*/}"; _ks="${_kb//[^A-Za-z0-9_]/_}"; _kn=$(_kfunc "$_k")
-          _cf=$(_kfile "$_ck"); _cb="${_cf##*/}"; _cs="${_cb//[^A-Za-z0-9_]/_}"; _cn=$(_kfunc "$_ck")
-          printf '  %s_%s --> %s_%s\n' "$_ks" "$_kn" "$_cs" "$_cn"
+          _kf=$(_kfile "$_k");  _kb="${_kf##*/}"; _ks="${_kb//[^A-Za-z0-9_]/_}"; _kni=$(_mmd_id "$(_kfunc "$_k")")
+          _cf=$(_kfile "$_ck"); _cb="${_cf##*/}"; _cs="${_cb//[^A-Za-z0-9_]/_}"; _cni=$(_mmd_id "$(_kfunc "$_ck")")
+          printf '  %s_%s --> %s_%s\n' "$_ks" "$_kni" "$_cs" "$_cni"
         else
-          printf '  %s --> %s\n' "$(_kfunc "$_k")" "$(_kfunc "$_ck")"
+          _kni=$(_mmd_id "$(_kfunc "$_k")")
+          _cni=$(_mmd_id "$(_kfunc "$_ck")")
+          printf '  %s --> %s\n' "$_kni" "$_cni"
         fi
       done
     done
@@ -894,11 +945,42 @@ _write_dot() {
   local _k _ck _f _bn _fn _ci _eid
   declare -A _fmap=() _eseen=()
 
+  # Theme colors
+  local _bg_color="#ffffff"
+  local _node_fill="#f5f5f5"
+  local _font_color="black"
+  local _edge_color="#333333"
+  local _cluster_fill="#eeeeee"
+  local _cluster_font="black"
+
+  case "$_OUT_THEME" in
+    dark)
+      _bg_color="#1e1e1e"
+      _node_fill="#2d2d2d"
+      _font_color="white"
+      _edge_color="#aaaaaa"
+      _cluster_fill="#2a2a2a"
+      _cluster_font="white"
+      ;;
+    light)
+      # explicit light values (same as defaults but explicit)
+      _bg_color="#ffffff"
+      _node_fill="#f5f5f5"
+      _font_color="black"
+      _edge_color="#333333"
+      _cluster_fill="#eeeeee"
+      _cluster_font="black"
+      ;;
+  esac
+
   {
     printf 'digraph callgraph {\n'
-    printf '    graph [label="%s" labelloc=t fontname="Courier" fontsize=14];\n' "$_TITLE"
-    printf '    node  [shape=box fontname="Courier" style=filled fillcolor="#f5f5f5"];\n'
-    printf '    edge  [fontname="Courier" fontsize=10];\n'
+    printf '    graph [label="%s" labelloc=t fontname="Courier" fontsize=14 bgcolor="%s" fontcolor="%s"];\n' \
+      "$_TITLE" "$_bg_color" "$_font_color"
+    printf '    node  [shape=box fontname="Courier" style=filled fillcolor="%s" fontcolor="%s"];\n' \
+      "$_node_fill" "$_font_color"
+    printf '    edge  [fontname="Courier" fontsize=10 color="%s" fontcolor="%s"];\n' \
+      "$_edge_color" "$_font_color"
     printf '    rankdir=LR;\n\n'
 
     if [[ $_MULTI -eq 1 ]]; then
@@ -909,11 +991,12 @@ _write_dot() {
       for _f in $(printf '%s\n' "${!_fmap[@]}" | sort); do
         _bn="${_f##*/}"
         printf '    subgraph cluster_%d {\n' "$_ci"
-        printf '        label="%s"; style=filled; fillcolor="#eeeeee";\n' "$_bn"
+        printf '        label="%s"; style=filled; fillcolor="%s"; fontcolor="%s";\n' \
+          "$_bn" "$_cluster_fill" "$_cluster_font"
         for _k in ${_fmap[$_f]}; do
           _fn=$(_kfunc "$_k")
-          printf '        "%s" [label="%s\\n%s()\\ncalled: %s"];\n' \
-            "$_k" "${RTYPE[$_k]:-void}" "$_fn" "${FREQ[$_k]:-0}"
+          printf '        "%s" [label="%s\\n%s()\\ncalled: %s\\nL%s"];\n' \
+            "$_k" "${RTYPE[$_k]:-void}" "$_fn" "${FREQ[$_k]:-0}" "${LINE_RANGE[$_k]:-?}"
         done
         printf '    }\n\n'
         _ci=$(( _ci + 1 ))
@@ -921,8 +1004,8 @@ _write_dot() {
     else
       for _k in "${ALL_FUNCS[@]}"; do
         _fn=$(_kfunc "$_k")
-        printf '    "%s" [label="%s\\n%s()\\ncalled: %s"];\n' \
-          "$_fn" "${RTYPE[$_k]:-void}" "$_fn" "${FREQ[$_k]:-0}"
+        printf '    "%s" [label="%s\\n%s()\\ncalled: %s\\nL%s"];\n' \
+          "$_fn" "${RTYPE[$_k]:-void}" "$_fn" "${FREQ[$_k]:-0}" "${LINE_RANGE[$_k]:-?}"
       done
     fi
 
