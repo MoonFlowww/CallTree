@@ -117,7 +117,7 @@ calltree.sh PATH [PATH ...] [OPTIONS]
 | `-out-T` | `[FILE]` | `<base>.txt` | Write plain-**T**ext tree (no ANSI codes) |
 | `-out-M` | `[FILE]` | `<base>.mmd` | Write **M**ermaid graph. Multi-file mode wraps each file's functions in a named subgraph |
 | `-out-D` | `[FILE]` | `<base>.dot` | Write Graphviz **D**OT. Multi-file mode wraps each file's functions in a cluster |
-| `-bg-d` | - | - | Define **b**ack**g**round as **b**lack for Mermaid and Dot graphs |
+| `-bg-d` | - | - | Define **b**ack**g**round as **d**ark for Mermaid and Dot graphs |
 | `-bg-w` | - | - | Define **b**ack**g**round as **w**hite for Mermaid and Dot graphs |
 | `-c` | — | off | **C**olorize function names in terminal using 256-color ANSI |
 | `-s` | — | off | **S**ee — always expand repeated subtrees (disable `[seen]` compression) |
